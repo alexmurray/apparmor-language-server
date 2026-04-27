@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "apparmor-language-server"
+version         = "0.1.0"
+description     = "Language Server Protocol server for AppArmor profiles"
+readme          = "README.md"
+license         = { text = "GPL-3.0+" }
+requires-python = ">=3.10"
+
+dependencies = [
+    "pygls>=2.1",
+    "lsprotocol>=2024.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[project.scripts]
+apparmor-language-server = "apparmor_language_server.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["apparmor_language_server*"]
