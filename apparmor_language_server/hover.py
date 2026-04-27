@@ -25,7 +25,6 @@ from lsprotocol.types import (
 
 from .constants import (
     CAPABILITIES,
-    DBUS_BUSES,
     FILE_PERMISSIONS,
     NETWORK_FAMILIES,
     NETWORK_TYPES,

@@ -22,9 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urlparse
 
 from lsprotocol.types import (
     # Server capabilities
@@ -45,8 +43,6 @@ from lsprotocol.types import (
     CompletionOptions,
     CompletionParams,
     DefinitionParams,
-    Diagnostic,
-    DiagnosticSeverity,
     DidChangeTextDocumentParams,
     DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
@@ -60,14 +56,11 @@ from lsprotocol.types import (
     DocumentSymbolParams,
     Hover,
     Location,
-    LocationLink,
     Position,
     PublishDiagnosticsParams,
     Range,
-    ServerCapabilities,
     SymbolInformation,
     SymbolKind,
-    TextDocumentSyncKind,
     TextEdit,
     WorkspaceSymbolParams,
 )
@@ -81,7 +74,6 @@ from .parser import (
     CapabilityNode,
     DocumentNode,
     FileRuleNode,
-    GenericRuleNode,
     IncludeNode,
     NetworkNode,
     Node,
@@ -505,7 +497,6 @@ def _word_at_position(line: str, ch: int) -> str:
 
 def main():
     import argparse
-    import sys
 
     logging.basicConfig(
         level=logging.INFO,

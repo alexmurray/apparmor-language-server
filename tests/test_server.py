@@ -13,8 +13,6 @@ from apparmor_language_server.hover import get_hover
 from apparmor_language_server.parser import (
     CapabilityNode,
     FileRuleNode,
-    IncludeNode,
-    ProfileNode,
     parse_document,
 )
 from lsprotocol.types import Position
@@ -190,7 +188,7 @@ class TestCompletions:
         result = self._complete("  include <abstractions/", 23)
         labels = {item.label for item in result.items}
         # Should have at least some abstractions
-        assert any("abstractions/" in l for l in labels)
+        assert any("abstractions/" in label for label in labels)
 
     def test_file_perm_completions(self):
         result = self._complete("  /etc/passwd ", 14)
@@ -222,7 +220,7 @@ class TestFormatting:
         out = self._format(src)
         lines = out.splitlines()
         # capability line should be indented
-        cap_line = next(l for l in lines if "capability" in l)
+        cap_line = next(label for label in lines if "capability" in label)
         assert cap_line.startswith("  ")
 
     def test_capabilities_sorted(self):

@@ -31,7 +31,6 @@ from lsprotocol.types import (
 )
 
 from .constants import DEFAULT_INDENT
-from .parser import ABINode, DocumentNode, IncludeNode, ProfileNode
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 

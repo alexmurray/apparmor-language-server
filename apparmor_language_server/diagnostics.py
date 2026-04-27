@@ -20,7 +20,6 @@ Checks performed
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Optional
 
 from lsprotocol.types import (
@@ -38,7 +37,6 @@ from .constants import (
 )
 from .parser import (
     ABINode,
-    AliasNode,
     CapabilityNode,
     CommentNode,
     DocumentNode,
@@ -281,7 +279,6 @@ def _check_file_rule(
             break
 
     # Warn about dangerous unconfined exec
-    lower_perms = perm_str.lower()
     for dp in _DANGEROUS_PERMS:
         if dp in perm_str:
             diags.append(
