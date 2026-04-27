@@ -1,5 +1,7 @@
 # AppArmor Language Server (`apparmor-language-server`)
 
+[![CI](https://github.com/alexmurray/apparmor-language-server/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/alexmurray/apparmor-language-server/actions/workflows/build-and-test.yml)
+
 A full-featured [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 server for editing **AppArmor profiles**, written in Python using
 [pygls](https://github.com/openlawlibrary/pygls).

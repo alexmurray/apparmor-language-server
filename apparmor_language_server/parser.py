@@ -325,7 +325,7 @@ class Parser:
             text=raw.strip().lstrip("#").strip(),
         )
 
-    def _parse_abi(self) -> AbiNode:
+    def _parse_abi(self) -> ABINode:
         ln, raw = self._pos, self._lines[self._pos]
         m = RE_ABI_GLOB.match(raw)
         path = m.group(1) if m else ""

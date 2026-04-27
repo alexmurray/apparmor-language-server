@@ -19,10 +19,8 @@ Completion contexts
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
-from typing import Optional
 
 from lsprotocol.types import (
     CompletionItem,
@@ -32,29 +30,23 @@ from lsprotocol.types import (
     MarkupContent,
     MarkupKind,
     Position,
-    Range,
-    TextEdit,
 )
 
 from .constants import (
     ABIS,
     ABSTRACTIONS,
-    ALL_KEYWORDS,
     CAPABILITIES,
     DBUS_BUSES,
     DBUS_PERMISSIONS,
-    DEFAULT_INDENT,
     FILE_PERMISSIONS,
     MOUNT_OPTIONS,
     NETWORK_FAMILIES,
     NETWORK_TYPES,
     PROFILE_FLAGS,
     PTRACE_PERMISSIONS,
-    RULE_KEYWORDS,
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
     UNIX_PERMISSIONS,
-    UNIX_TYPES,
     VARIABLES,
 )
 
@@ -536,7 +528,6 @@ def _complete_filesystem_path(partial: str) -> list[CompletionItem]:
     # Real filesystem
     try:
         parent = Path(partial).parent
-        stem = Path(partial).name
         if not parent.is_absolute():
             parent = Path("/") / parent
         if parent.is_dir():
