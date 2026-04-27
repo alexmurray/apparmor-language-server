@@ -1,0 +1,29 @@
+name: apparmor-language-server
+adopt-info: apparmor-language-server
+base: core24
+summary: Language server for AppArmor profiles
+description: |
+  This is a language server for AppArmor profiles, which provides features such as
+  code completion, linting, and diagnostics for AppArmor profiles. It is designed
+  to be used with editors that support the Language Server Protocol (LSP), such as
+  Visual Studio Code, Vim, and Emacs.
+
+grade: devel # must be 'stable' to release into candidate/stable channels
+confinement: strict
+
+apps:
+  apparmor-language-server:
+    command: bin/apparmor-language-server
+    plugs:
+      - network
+      - home
+parts:
+  apparmor-language-server:
+    plugin: python
+    source: .
+    build-snaps:
+      - yq
+    override-pull: |
+      craftctl default
+      # read version from pyproject.toml and set it as the snap version
+      craftctl set version=$(yq ".project.version" pyproject.toml)
