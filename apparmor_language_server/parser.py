@@ -17,10 +17,11 @@ from typing import Optional
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-RE_BLANK        = re.compile(r"^\s*$")
-RE_COMMENT      = re.compile(r"^\s*#.*$")
+RE_BLANK = re.compile(r"^\s*$")
+RE_COMMENT = re.compile(r"^\s*#.*$")
+RE_ABI_GLOB = re.compile(r"""^\s*#?abi\s+[<"]([^>"]+)[>"],""")
 RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]""")
-RE_INCLUDE_IF   = re.compile(r"""^\s*include\s+if\s+exists\s+[<"]([^>"]+)[>"]""")
+RE_INCLUDE_IF = re.compile(r"""^\s*include\s+if\s+exists\s+[<"]([^>"]+)[>"]""")
 RE_VARIABLE_DEF = re.compile(r"^\s*(@\{[A-Za-z_][A-Za-z0-9_]*\})\s*[+]?=\s*(.*)$")
 
 # Matches all profile/sub-profile opening lines, e.g.:
@@ -29,14 +30,14 @@ RE_VARIABLE_DEF = re.compile(r"^\s*(@\{[A-Za-z_][A-Za-z0-9_]*\})\s*[+]?=\s*(.*)$
 #   /usr/bin/myapp {
 # Named groups: n (full "name [attachment]" token), flags
 _PROFILE_OPEN_PAT = (
-    r"^\s*(?:profile\s+)?"                       # optional 'profile' keyword
-    r"(?P<n>[^\s{(=][^\s{(]*)?"                  # name (first token)
-    r"(?:\s+(?P<att>[^\s{(=][^\s{(]*))?"         # optional attachment path (second token)
+    r"^\s*(?:profile\s+)?"  # optional 'profile' keyword
+    r"(?P<n>[^\s{(=][^\s{(]*)?"  # name (first token)
+    r"(?:\s+(?P<att>[^\s{(=][^\s{(]*))?"  # optional attachment path (second token)
     r"(?:\s*flags\s*=\s*\((?P<flags>[^)]*)\))?"  # optional flags=(...)
-    r"\s*\{"                                      # opening brace
+    r"\s*\{"  # opening brace
 )
 RE_PROFILE_OPEN = re.compile(_PROFILE_OPEN_PAT)
-RE_HAT_OPEN      = re.compile(r"^\s*hat\s+(?P<n>\S+)\s*\{")
+RE_HAT_OPEN = re.compile(r"^\s*hat\s+(?P<n>\S+)\s*\{")
 RE_PROFILE_CLOSE = re.compile(r"^\s*\}\s*,?\s*$")
 
 RE_CAPABILITY = re.compile(
@@ -73,16 +74,34 @@ def _line_opens_profile(line: str) -> bool:
         # Make sure it's not a rule keyword masquerading as a profile
         first_tok = s.split()[0].rstrip("{")
         rule_kws = {
-            "capability", "network", "signal", "ptrace", "mount", "umount",
-            "dbus", "unix", "deny", "audit", "owner", "rlimit", "include",
-            "change_profile", "change_hat", "alias", "pivot_root",
-            "userns", "io_uring", "mqueue",
+            "abi",
+            "capability",
+            "network",
+            "signal",
+            "ptrace",
+            "mount",
+            "umount",
+            "dbus",
+            "unix",
+            "deny",
+            "audit",
+            "owner",
+            "rlimit",
+            "include",
+            "change_profile",
+            "change_hat",
+            "alias",
+            "pivot_root",
+            "userns",
+            "io_uring",
+            "mqueue",
         }
         return first_tok not in rule_kws
     return False
 
 
 # ── AST nodes ─────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class Position:
@@ -105,6 +124,12 @@ class Node:
 @dataclass
 class CommentNode(Node):
     text: str = ""
+
+
+@dataclass
+class ABINode(Node):
+    path: str = ""
+    angle_bracket: bool = True
 
 
 @dataclass
@@ -165,12 +190,14 @@ class ProfileNode(Node):
 class DocumentNode:
     uri: str
     children: list[Node] = field(default_factory=list)
+    abi: Optional[ABINode] = None
     includes: list[IncludeNode] = field(default_factory=list)
     variables: dict[str, VariableDefNode] = field(default_factory=dict)
     profiles: list[ProfileNode] = field(default_factory=list)
 
 
 # ── Parser ────────────────────────────────────────────────────────────────────
+
 
 class ParseError(Exception):
     def __init__(self, message: str, line: int, character: int = 0):
@@ -191,9 +218,9 @@ class Parser:
     """
 
     def __init__(self, uri: str, text: str):
-        self._uri   = uri
+        self._uri = uri
         self._lines = text.splitlines()
-        self._pos   = 0
+        self._pos = 0
         self.errors: list[ParseError] = []
 
     # ── Entry point ───────────────────────────────────────────────────────────
@@ -203,9 +230,11 @@ class Parser:
         while self._pos < len(self._lines):
             node = self._parse_node()
             if node is None:
-                self._advance()   # skip stray '}'
+                self._advance()  # skip stray '}'
                 continue
             doc.children.append(node)
+            if isinstance(node, ABINode):
+                doc.abi = node
             if isinstance(node, IncludeNode):
                 doc.includes.append(node)
             elif isinstance(node, VariableDefNode):
@@ -226,7 +255,7 @@ class Parser:
     def _make_range(self, start_line: int, end_line: int) -> Range:
         end_line = min(end_line, len(self._lines) - 1)
         sl = self._lines[start_line] if start_line < len(self._lines) else ""
-        el = self._lines[end_line]   if end_line   < len(self._lines) else ""
+        el = self._lines[end_line] if end_line < len(self._lines) else ""
         sc = len(sl) - len(sl.lstrip())
         ec = len(el)
         return Range(Position(start_line, sc), Position(end_line, ec))
@@ -255,6 +284,9 @@ class Parser:
             # Comment (unless it IS an include directive)
             if RE_COMMENT.match(line) and not RE_INCLUDE_GLOB.match(line):
                 return self._parse_comment()
+
+            if RE_ABI_GLOB.match(line):
+                return self._parse_abi()
 
             if RE_INCLUDE_GLOB.match(line) or RE_INCLUDE_IF.match(line):
                 return self._parse_include()
@@ -293,11 +325,24 @@ class Parser:
             text=raw.strip().lstrip("#").strip(),
         )
 
+    def _parse_abi(self) -> AbiNode:
+        ln, raw = self._pos, self._lines[self._pos]
+        m = RE_ABI_GLOB.match(raw)
+        path = m.group(1) if m else ""
+        angle = "<" in raw and ">" in raw
+        self._advance()
+        return ABINode(
+            range=self._make_range(ln, ln),
+            raw=raw,
+            path=path,
+            angle_bracket=angle,
+        )
+
     def _parse_include(self) -> IncludeNode:
         ln, raw = self._pos, self._lines[self._pos]
-        cond  = bool(RE_INCLUDE_IF.match(raw))
-        m     = RE_INCLUDE_GLOB.match(raw)
-        path  = m.group(1) if m else ""
+        cond = bool(RE_INCLUDE_IF.match(raw))
+        m = RE_INCLUDE_GLOB.match(raw)
+        path = m.group(1) if m else ""
         angle = "<" in raw and ">" in raw
         self._advance()
         return IncludeNode(
@@ -310,10 +355,10 @@ class Parser:
 
     def _parse_variable(self) -> VariableDefNode:
         ln, raw = self._pos, self._lines[self._pos]
-        m  = RE_VARIABLE_DEF.match(raw)
+        m = RE_VARIABLE_DEF.match(raw)
         self._advance()
-        name      = m.group(1)
-        values    = [v for v in (m.group(2) or "").split() if v]
+        name = m.group(1)
+        values = [v for v in (m.group(2) or "").split() if v]
         augmented = "+=" in raw
         return VariableDefNode(
             range=self._make_range(ln, ln),
@@ -336,25 +381,25 @@ class Parser:
 
     def _parse_profile(self, is_hat: bool = False) -> ProfileNode:
         start_line = self._pos
-        raw_start  = self._lines[self._pos]
+        raw_start = self._lines[self._pos]
 
         # --- Extract name and flags ---
         if is_hat:
-            m    = RE_HAT_OPEN.match(raw_start)
+            m = RE_HAT_OPEN.match(raw_start)
             name = m.group("n") if m else ""
             flags: list[str] = []
         else:
-            m         = RE_PROFILE_OPEN.match(raw_start)
+            m = RE_PROFILE_OPEN.match(raw_start)
             if m:
                 # 'n' is the profile name; 'att' is the optional binary attachment path
                 name = (m.group("n") or "").strip()
                 # Remove 'profile' keyword if it bled into name
                 if name == "profile":
                     name = (m.group("att") or "").strip()
-                flags_str = (m.group("flags") or "")
+                flags_str = m.group("flags") or ""
                 flags = [f.strip() for f in flags_str.split(",") if f.strip()]
             else:
-                name  = ""
+                name = ""
                 flags = []
 
         # --- Single-line profile? e.g.  profile x { cap kill, } ---
@@ -362,7 +407,7 @@ class Parser:
         brace_close = raw_start.rfind("}")
         if brace_open != -1 and brace_close > brace_open:
             inner_text = raw_start[brace_open + 1 : brace_close].strip()
-            children   = self._parse_inline_rules(inner_text, start_line)
+            children = self._parse_inline_rules(inner_text, start_line)
             self._advance()
             return ProfileNode(
                 range=self._make_range(start_line, start_line),
@@ -374,11 +419,11 @@ class Parser:
             )
 
         # --- Multi-line profile ---
-        self._advance()   # consume opening line
+        self._advance()  # consume opening line
 
         children = []
         while self._pos < len(self._lines):
-            line    = self._lines[self._pos]
+            line = self._lines[self._pos]
             stripped = line.strip().rstrip(",")
 
             if stripped == "}":
@@ -429,8 +474,8 @@ class Parser:
             part = part.strip()
             if not part:
                 continue
-            sub   = Parser(self._uri, part + ",")
-            node  = sub._parse_node()
+            sub = Parser(self._uri, part + ",")
+            node = sub._parse_node()
             if node is not None:
                 node.range = Range(
                     Position(line_no, 0),
@@ -485,9 +530,9 @@ class Parser:
             )
 
         # -- Generic --
-        tokens  = stripped.split()
+        tokens = stripped.split()
         keyword = tokens[0] if tokens else ""
-        content = stripped[len(keyword):].strip() if tokens else ""
+        content = stripped[len(keyword) :].strip() if tokens else ""
         return GenericRuleNode(
             range=self._make_range(ln, ln),
             raw=raw,
@@ -501,11 +546,12 @@ class Parser:
         for kw in ("deny", "audit", "owner"):
             if stripped.startswith(kw + " "):
                 mods.append(kw)
-                stripped = stripped[len(kw):].lstrip()
+                stripped = stripped[len(kw) :].lstrip()
         return mods
 
 
 # ── Convenience helpers ───────────────────────────────────────────────────────
+
 
 def parse_document(uri: str, text: str) -> tuple[DocumentNode, list[ParseError]]:
     """Parse an AppArmor profile document; return (AST, errors)."""

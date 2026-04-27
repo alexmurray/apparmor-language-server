@@ -37,6 +37,7 @@ from .constants import (
     PROFILE_FLAGS,
 )
 from .parser import (
+    ABINode,
     AliasNode,
     CapabilityNode,
     CommentNode,
@@ -130,6 +131,8 @@ def _check_node(
         _check_network(node, diags)
     elif isinstance(node, FileRuleNode):
         _check_file_rule(node, diags, defined_vars)
+    elif isinstance(node, ABINode):
+        _check_abi(node, diags, uri)
     elif isinstance(node, IncludeNode):
         _check_include(node, diags, uri)
     elif isinstance(node, GenericRuleNode):
@@ -315,6 +318,26 @@ def _check_file_rule(
                     "undefined-variable",
                 )
             )
+
+
+# ── Abi checks ────────────────────────────────────────────────────────────
+
+
+def _check_abi(
+    node: ABINode,
+    diags: list[Diagnostic],
+    uri: str,
+) -> None:
+    resolved = resolve_include_path(node.path, uri)
+    if resolved is None:
+        diags.append(
+            _diag(
+                node,
+                f"ABI target '{node.path}' could not be found on disk.",
+                DiagnosticSeverity.Warning,
+                "missing-abi",
+            )
+        )
 
 
 # ── Include checks ────────────────────────────────────────────────────────────

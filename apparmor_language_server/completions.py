@@ -32,11 +32,12 @@ from lsprotocol.types import (
     MarkupContent,
     MarkupKind,
     Position,
-    TextEdit,
     Range,
+    TextEdit,
 )
 
 from .constants import (
+    ABIS,
     ABSTRACTIONS,
     ALL_KEYWORDS,
     CAPABILITIES,
@@ -59,20 +60,24 @@ from .constants import (
 
 # ── Regex helpers ─────────────────────────────────────────────────────────────
 
+_RE_ABI_START = re.compile(r"""^\s*#?abi\s+(<|")""")
+_RE_ABI_PATH = re.compile(r"""^\s*#?abi\s+[<"]([^>"]*)?,$""")
 _RE_INCLUDE_START = re.compile(r"""^\s*#?include\s+(<|")""")
-_RE_INCLUDE_PATH  = re.compile(r"""^\s*#?include\s+[<"]([^>"]*)?$""")
-_RE_CAPABILITY    = re.compile(r"^\s*(deny\s+|audit\s+)?capability\s+")
-_RE_NETWORK       = re.compile(r"^\s*(deny\s+|audit\s+)?network\s+")
-_RE_SIGNAL        = re.compile(r"^\s*(deny\s+|audit\s+)?signal\s+")
-_RE_PTRACE        = re.compile(r"^\s*(deny\s+|audit\s+)?ptrace\s+")
-_RE_MOUNT         = re.compile(r"^\s*(deny\s+|audit\s+)?(u?mount|remount)\s+")
-_RE_DBUS          = re.compile(r"^\s*(deny\s+|audit\s+)?dbus\s+")
-_RE_UNIX          = re.compile(r"^\s*(deny\s+|audit\s+)?unix\s+")
-_RE_PATH_START    = re.compile(r"[\s{(]([/@~][^\s]*)$")
-_RE_AFTER_PATH    = re.compile(r"^\s*(deny\s+|audit\s+|owner\s+)?([/@~@][^\s]+)\s+([rwaxmlkdDuUipPcCbBI]*)$")
-_RE_VAR_START     = re.compile(r"@\{([A-Za-z_]*)$")
+_RE_INCLUDE_PATH = re.compile(r"""^\s*#?include\s+[<"]([^>"]*)?$""")
+_RE_CAPABILITY = re.compile(r"^\s*(deny\s+|audit\s+)?capability\s+")
+_RE_NETWORK = re.compile(r"^\s*(deny\s+|audit\s+)?network\s+")
+_RE_SIGNAL = re.compile(r"^\s*(deny\s+|audit\s+)?signal\s+")
+_RE_PTRACE = re.compile(r"^\s*(deny\s+|audit\s+)?ptrace\s+")
+_RE_MOUNT = re.compile(r"^\s*(deny\s+|audit\s+)?(u?mount|remount)\s+")
+_RE_DBUS = re.compile(r"^\s*(deny\s+|audit\s+)?dbus\s+")
+_RE_UNIX = re.compile(r"^\s*(deny\s+|audit\s+)?unix\s+")
+_RE_PATH_START = re.compile(r"[\s{(]([/@~][^\s]*)$")
+_RE_AFTER_PATH = re.compile(
+    r"^\s*(deny\s+|audit\s+|owner\s+)?([/@~@][^\s]+)\s+([rwaxmlkdDuUipPcCbBI]*)$"
+)
+_RE_VAR_START = re.compile(r"@\{([A-Za-z_]*)$")
 _RE_PROFILE_FLAGS = re.compile(r"flags\s*=\s*\(([^)]*)$")
-_RE_MODIFIERS     = re.compile(r"^\s*(deny|audit|owner)\s+$")
+_RE_MODIFIERS = re.compile(r"^\s*(deny|audit|owner)\s+$")
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -97,6 +102,13 @@ def get_completions(
     if vm:
         partial = vm.group(1)
         items = _complete_variables(partial)
+        return CompletionList(is_incomplete=False, items=items)
+
+    # ── ABI completion ────────────────────────────────────────────
+    if _RE_ABI_START.match(prefix):
+        im = _RE_ABI_PATH.match(prefix)
+        partial = im.group(1) if im else ""
+        items = _complete_abi_paths(partial, document_uri)
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Include path completion ────────────────────────────────────────────
@@ -128,23 +140,33 @@ def get_completions(
         # After 'network': families; after a family: types
         net_tokens = [t for t in tokens if t not in ("network", "deny", "audit")]
         if len(net_tokens) == 0:
-            items = _complete_list(NETWORK_FAMILIES, CompletionItemKind.Value, "Network family")
+            items = _complete_list(
+                NETWORK_FAMILIES, CompletionItemKind.Value, "Network family"
+            )
         elif len(net_tokens) == 1:
-            items = _complete_list(NETWORK_TYPES, CompletionItemKind.Value, "Network socket type")
+            items = _complete_list(
+                NETWORK_TYPES, CompletionItemKind.Value, "Network socket type"
+            )
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Signal ────────────────────────────────────────────────────────────
     if _RE_SIGNAL.match(prefix):
         tokens = [t for t in prefix.split() if t not in ("signal", "deny", "audit")]
         if len(tokens) == 0:
-            items = _complete_list(SIGNAL_PERMISSIONS, CompletionItemKind.Value, "Signal permission")
+            items = _complete_list(
+                SIGNAL_PERMISSIONS, CompletionItemKind.Value, "Signal permission"
+            )
         else:
-            items = _complete_list(SIGNAL_NAMES, CompletionItemKind.Value, "Signal name")
+            items = _complete_list(
+                SIGNAL_NAMES, CompletionItemKind.Value, "Signal name"
+            )
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Ptrace ────────────────────────────────────────────────────────────
     if _RE_PTRACE.match(prefix):
-        items = _complete_list(PTRACE_PERMISSIONS, CompletionItemKind.Value, "ptrace permission")
+        items = _complete_list(
+            PTRACE_PERMISSIONS, CompletionItemKind.Value, "ptrace permission"
+        )
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Mount ─────────────────────────────────────────────────────────────
@@ -156,9 +178,13 @@ def get_completions(
     if _RE_DBUS.match(prefix):
         tokens = [t for t in prefix.split() if t not in ("dbus", "deny", "audit")]
         if len(tokens) == 0:
-            items = _complete_list(DBUS_PERMISSIONS, CompletionItemKind.Value, "DBus permission")
+            items = _complete_list(
+                DBUS_PERMISSIONS, CompletionItemKind.Value, "DBus permission"
+            )
         elif len(tokens) == 1 and tokens[0] == "bus":
-            items = _complete_list(DBUS_BUSES, CompletionItemKind.Value, "DBus bus name")
+            items = _complete_list(
+                DBUS_BUSES, CompletionItemKind.Value, "DBus bus name"
+            )
         else:
             items = _complete_dbus_keys()
         return CompletionList(is_incomplete=False, items=items)
@@ -167,7 +193,9 @@ def get_completions(
     if _RE_UNIX.match(prefix):
         tokens = [t for t in prefix.split() if t not in ("unix", "deny", "audit")]
         if len(tokens) == 0:
-            items = _complete_list(UNIX_PERMISSIONS, CompletionItemKind.Value, "Unix socket permission")
+            items = _complete_list(
+                UNIX_PERMISSIONS, CompletionItemKind.Value, "Unix socket permission"
+            )
         return CompletionList(is_incomplete=False, items=items)
 
     # ── File permissions (after a path) ───────────────────────────────────
@@ -226,7 +254,7 @@ def _complete_keywords(partial: str) -> list[CompletionItem]:
             "Allow unmounting a filesystem.",
         ),
         "dbus": (
-            'dbus (${1:send}) bus=${2:session} path=${3:/org/example} interface=${4:org.example.Interface},',
+            "dbus (${1:send}) bus=${2:session} path=${3:/org/example} interface=${4:org.example.Interface},",
             "Allow DBus interaction.",
         ),
         "unix": (
@@ -253,8 +281,12 @@ def _complete_keywords(partial: str) -> list[CompletionItem]:
             "rlimit ${1:nofile} <= ${2:1024},",
             "Set a resource limit for the confined process.",
         ),
+        "abi": (
+            "abi <${1:abi/5.0}>,",
+            "The AppArmor ABI to target for this profile.",
+        ),
         "include": (
-            'include <${1:abstractions/base}>',
+            "include <${1:abstractions/base}>",
             "Include an AppArmor abstraction or sub-policy file.",
         ),
         "profile": (
@@ -335,21 +367,21 @@ def _complete_file_permissions(partial: str) -> list[CompletionItem]:
             )
     # Common composite permission strings
     composites = {
-        "r":    "Read only",
-        "rw":   "Read and write",
-        "rwx":  "Read, write, execute (unconfined exec, use carefully)",
-        "rx":   "Read and execute (inherit profile)",
-        "rix":  "Read, inherit-exec",
-        "rPx":  "Read, exec under named profile (safe)",
-        "rpx":  "Read, exec under named profile",
-        "rcx":  "Read, exec under child profile",
-        "rCx":  "Read, exec under child profile (safe)",
-        "ra":   "Read and append",
-        "rwk":  "Read, write, lock",
+        "r": "Read only",
+        "rw": "Read and write",
+        "rwx": "Read, write, execute (unconfined exec, use carefully)",
+        "rx": "Read and execute (inherit profile)",
+        "rix": "Read, inherit-exec",
+        "rPx": "Read, exec under named profile (safe)",
+        "rpx": "Read, exec under named profile",
+        "rcx": "Read, exec under child profile",
+        "rCx": "Read, exec under child profile (safe)",
+        "ra": "Read and append",
+        "rwk": "Read, write, lock",
         "rwkl": "Read, write, lock, link",
-        "rm":   "Read and mmap",
-        "l":    "Hard-link",
-        "rl":   "Read and hard-link",
+        "rm": "Read and mmap",
+        "l": "Hard-link",
+        "rl": "Read and hard-link",
     }
     for perm, desc in composites.items():
         if not partial or perm.startswith(partial):
@@ -371,6 +403,52 @@ _APPARMOR_SEARCH_DIRS = [
     Path("/usr/share/apparmor"),
     Path("/usr/share/apparmor.d"),
 ]
+
+
+def _complete_abi_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
+    """
+    Complete ABI paths.
+    Shows known ABIs, then files found in abi dirs.
+    """
+    items: list[CompletionItem] = []
+    seen: set[str] = set()
+
+    # 1. Known ABIs list
+    for abs_path in ABIS:
+        if not partial or abs_path.startswith(partial):
+            label = abs_path
+            items.append(
+                CompletionItem(
+                    label=label,
+                    kind=CompletionItemKind.Module,
+                    detail="AppArmor ABI",
+                    insert_text=label,
+                )
+            )
+            seen.add(label)
+
+    # 2. Files on disk under search dirs
+    for base in _APPARMOR_SEARCH_DIRS:
+        if not base.is_dir():
+            continue
+        try:
+            for entry in base.rglob("abi/*"):
+                if entry.is_file():
+                    rel = str(entry.relative_to(base))
+                    if rel not in seen and (not partial or rel.startswith(partial)):
+                        items.append(
+                            CompletionItem(
+                                label=rel,
+                                kind=CompletionItemKind.File,
+                                detail=str(base),
+                                insert_text=rel,
+                            )
+                        )
+                        seen.add(rel)
+        except PermissionError:
+            pass
+
+    return items
 
 
 def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
@@ -429,7 +507,9 @@ def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
                     items.append(
                         CompletionItem(
                             label=rel,
-                            kind=CompletionItemKind.File if entry.is_file() else CompletionItemKind.Folder,
+                            kind=CompletionItemKind.File
+                            if entry.is_file()
+                            else CompletionItemKind.Folder,
                             insert_text=rel,
                         )
                     )
@@ -463,7 +543,11 @@ def _complete_filesystem_path(partial: str) -> list[CompletionItem]:
             for entry in sorted(parent.iterdir())[:80]:  # cap to avoid flooding
                 label = str(entry)
                 if label.startswith(partial):
-                    kind = CompletionItemKind.Folder if entry.is_dir() else CompletionItemKind.File
+                    kind = (
+                        CompletionItemKind.Folder
+                        if entry.is_dir()
+                        else CompletionItemKind.File
+                    )
                     insert = label + ("/" if entry.is_dir() else "")
                     items.append(
                         CompletionItem(
@@ -581,7 +665,4 @@ def _complete_list(
     kind: CompletionItemKind,
     detail: str = "",
 ) -> list[CompletionItem]:
-    return [
-        CompletionItem(label=v, kind=kind, detail=detail)
-        for v in values
-    ]
+    return [CompletionItem(label=v, kind=kind, detail=detail) for v in values]

@@ -323,6 +323,17 @@ PROFILE_FLAGS: list[str] = [
     "no_attach_disconnected",
 ]
 
+# ── ABIs ────────────────────────────────────────
+
+ABIS: list[str] = [
+    "abi/3.0",
+    "abi/4.0",
+    "abi/4.0-ip",
+    "abi/5.0",
+    "abi/kernel-5.4-outoftree-network",
+    "abi/kernel-5.4-vanilla",
+]
+
 # ── Include abstractions ──────────────────────────────────────────────────────
 
 ABSTRACTIONS: list[str] = [

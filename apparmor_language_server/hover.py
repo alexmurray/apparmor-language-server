@@ -38,7 +38,7 @@ from .constants import (
 # ── Word extraction ───────────────────────────────────────────────────────────
 
 _RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_RE_VAR  = re.compile(r"@\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_RE_VAR = re.compile(r"@\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _RE_PERM = re.compile(r"(?<=[/\s])([rwaxmlkdDuUipPcCbBI]{1,4})(?=\s|,|$)")
 
 
@@ -56,7 +56,9 @@ def get_hover(
             if var_name in VARIABLES:
                 return _make_hover(
                     f"**`{var_name}`**\n\n{VARIABLES[var_name]}",
-                    line_text, m.start(), m.end(),
+                    line_text,
+                    m.start(),
+                    m.end(),
                 )
 
     # ── Word under cursor ─────────────────────────────────────────────────
@@ -69,7 +71,9 @@ def get_hover(
         return _make_hover(
             f"**Linux capability `{word}`** (`CAP_{word.upper()}`)\n\n"
             + _cap_doc(word),
-            line_text, word_start, word_end,
+            line_text,
+            word_start,
+            word_end,
         )
 
     # Check network family
@@ -77,7 +81,9 @@ def get_hover(
         return _make_hover(
             f"**Network family `{word}`**\n\n"
             "Restricts network access to this address family.",
-            line_text, word_start, word_end,
+            line_text,
+            word_start,
+            word_end,
         )
 
     # Check network type
@@ -85,7 +91,9 @@ def get_hover(
         return _make_hover(
             f"**Network socket type `{word}`**\n\n"
             "Restricts network access to this socket type.",
-            line_text, word_start, word_end,
+            line_text,
+            word_start,
+            word_end,
         )
 
     # Check keyword docs
@@ -97,21 +105,27 @@ def get_hover(
     if word in PROFILE_FLAGS:
         return _make_hover(
             f"**Profile flag `{word}`**\n\n" + _flag_doc(word),
-            line_text, word_start, word_end,
+            line_text,
+            word_start,
+            word_end,
         )
 
     # Check signal names
     if word in SIGNAL_NAMES:
         return _make_hover(
             f"**Signal `{word.upper()}`**\n\nPOSIX signal name used in `signal` rules.",
-            line_text, word_start, word_end,
+            line_text,
+            word_start,
+            word_end,
         )
 
     # Check ptrace perms
     if word in PTRACE_PERMISSIONS:
         return _make_hover(
             f"**ptrace permission `{word}`**\n\n" + _ptrace_doc(word),
-            line_text, word_start, word_end,
+            line_text,
+            word_start,
+            word_end,
         )
 
     # ── Permission character hover ─────────────────────────────────────────
@@ -126,7 +140,9 @@ def get_hover(
                     lines_out.append(f"- `{ch_perm}` — {desc}")
             return _make_hover(
                 "\n".join(lines_out),
-                line_text, pm.start(), pm.end(),
+                line_text,
+                pm.start(),
+                pm.end(),
             )
 
     return None
@@ -155,48 +171,48 @@ def _make_hover(md: str, line: str, start: int, end: int) -> Hover:
 def _flag_doc(flag: str) -> str:
     docs = {
         "complain": "Log policy violations but do not enforce them. Useful for developing new profiles.",
-        "enforce":  "Enforce the policy (default mode).",
-        "kill":     "Kill processes that violate the policy.",
+        "enforce": "Enforce the policy (default mode).",
+        "kill": "Kill processes that violate the policy.",
         "unconfined": "Run without any AppArmor confinement.",
-        "prompt":   "Prompt the user on violations (requires a policy prompt responder).",
+        "prompt": "Prompt the user on violations (requires a policy prompt responder).",
         "mediate_deleted": "Continue to mediate access after a file is deleted (unlinked).",
         "attach_disconnected": "Allow the profile to attach even when the binary has been disconnected from a dentry.",
         "chroot_relative": "Interpret paths relative to the process's chroot.",
-        "debug":    "Enable debug logging for this profile.",
+        "debug": "Enable debug logging for this profile.",
     }
     return docs.get(flag, "AppArmor profile flag.")
 
 
 def _cap_doc(cap: str) -> str:
     docs = {
-        "chown":          "Change file ownership (chown/fchown/lchown).",
-        "dac_override":   "Bypass discretionary access control (DAC) checks.",
-        "dac_read_search":"Bypass DAC read/search checks.",
-        "fowner":         "Bypass permission checks on operations that normally require file ownership.",
-        "fsetid":         "Don't clear set-user-ID/set-group-ID bits on file modification.",
-        "kill":           "Send signals to any process.",
-        "setgid":         "Change group ID (setgid/setegid).",
-        "setuid":         "Change user ID (setuid/seteuid).",
-        "setpcap":        "Modify process capability sets.",
-        "net_bind_service":"Bind to privileged ports (below 1024).",
-        "net_raw":        "Use raw/packet sockets.",
-        "net_admin":      "Perform various network administration tasks.",
-        "sys_chroot":     "Use chroot().",
-        "sys_admin":      "A broad capability covering many system administration operations.",
-        "sys_ptrace":     "Ptrace any process.",
-        "sys_module":     "Load and unload kernel modules.",
-        "sys_rawio":      "Raw I/O operations (ioperm, iopl, /dev/mem).",
-        "sys_nice":       "Raise process priority, set CPU affinity, I/O scheduling class.",
-        "sys_time":       "Set system clock.",
-        "mknod":          "Create special files using mknod.",
-        "audit_write":    "Write to the kernel audit log.",
-        "audit_control":  "Control the kernel audit system.",
-        "setfcap":        "Set file capabilities.",
-        "mac_override":   "Override Mandatory Access Control.",
-        "mac_admin":      "Administer Mandatory Access Control.",
-        "syslog":         "Use privileged syslog operations.",
-        "bpf":            "Load/manage BPF programs.",
-        "perfmon":        "Monitor system performance.",
+        "chown": "Change file ownership (chown/fchown/lchown).",
+        "dac_override": "Bypass discretionary access control (DAC) checks.",
+        "dac_read_search": "Bypass DAC read/search checks.",
+        "fowner": "Bypass permission checks on operations that normally require file ownership.",
+        "fsetid": "Don't clear set-user-ID/set-group-ID bits on file modification.",
+        "kill": "Send signals to any process.",
+        "setgid": "Change group ID (setgid/setegid).",
+        "setuid": "Change user ID (setuid/seteuid).",
+        "setpcap": "Modify process capability sets.",
+        "net_bind_service": "Bind to privileged ports (below 1024).",
+        "net_raw": "Use raw/packet sockets.",
+        "net_admin": "Perform various network administration tasks.",
+        "sys_chroot": "Use chroot().",
+        "sys_admin": "A broad capability covering many system administration operations.",
+        "sys_ptrace": "Ptrace any process.",
+        "sys_module": "Load and unload kernel modules.",
+        "sys_rawio": "Raw I/O operations (ioperm, iopl, /dev/mem).",
+        "sys_nice": "Raise process priority, set CPU affinity, I/O scheduling class.",
+        "sys_time": "Set system clock.",
+        "mknod": "Create special files using mknod.",
+        "audit_write": "Write to the kernel audit log.",
+        "audit_control": "Control the kernel audit system.",
+        "setfcap": "Set file capabilities.",
+        "mac_override": "Override Mandatory Access Control.",
+        "mac_admin": "Administer Mandatory Access Control.",
+        "syslog": "Use privileged syslog operations.",
+        "bpf": "Load/manage BPF programs.",
+        "perfmon": "Monitor system performance.",
         "checkpoint_restore": "Checkpoint and restore processes.",
     }
     return docs.get(cap, "Linux capability — see `man 7 capabilities` for details.")
@@ -204,10 +220,10 @@ def _cap_doc(cap: str) -> str:
 
 def _ptrace_doc(perm: str) -> str:
     docs = {
-        "read":      "Allow reading the state of processes matched by `peer=`.",
-        "readby":    "Allow the process to be read (introspected) by processes matched by `peer=`.",
-        "trace":     "Allow full ptrace of processes matched by `peer=`.",
-        "tracedby":  "Allow the process to be ptrace'd by processes matched by `peer=`.",
+        "read": "Allow reading the state of processes matched by `peer=`.",
+        "readby": "Allow the process to be read (introspected) by processes matched by `peer=`.",
+        "trace": "Allow full ptrace of processes matched by `peer=`.",
+        "tracedby": "Allow the process to be ptrace'd by processes matched by `peer=`.",
     }
     return docs.get(perm, "ptrace permission.")
 
@@ -243,9 +259,7 @@ _KEYWORD_DOCS: dict[str, str] = {
         "```\nmount options=(ro, nodev) /dev/sda1 -> /mnt/data,\n```\n"
     ),
     "umount": (
-        "## `umount`\n\n"
-        "Allow unmounting a filesystem.\n\n"
-        "```\numount /mnt/data,\n```\n"
+        "## `umount`\n\nAllow unmounting a filesystem.\n\n```\numount /mnt/data,\n```\n"
     ),
     "dbus": (
         "## `dbus`\n\n"
@@ -282,6 +296,11 @@ _KEYWORD_DOCS: dict[str, str] = {
         "## `hat`\n\n"
         "Define a hat — a sub-profile accessible via `change_hat()`.\n\n"
         "Used in multi-threaded applications (Apache mod_apparmor, etc.).\n"
+    ),
+    "abi": (
+        "## `abi`\n\n"
+        "Set the ABI of this AppArmor policy file.\n\n"
+        "```\nabi <abi/5.0>,\n```\n"
     ),
     "include": (
         "## `include`\n\n"

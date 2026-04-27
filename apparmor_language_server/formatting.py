@@ -31,13 +31,12 @@ from lsprotocol.types import (
 )
 
 from .constants import DEFAULT_INDENT
-from .parser import DocumentNode, IncludeNode, ProfileNode
-
+from .parser import ABINode, DocumentNode, IncludeNode, ProfileNode
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
 _RE_TRAILING = re.compile(r"\s+$")
-_RE_RULE_KW  = re.compile(
+_RE_RULE_KW = re.compile(
     r"^(\s*)(deny\s+|audit\s+|owner\s+)?"
     r"(capability|network|signal|ptrace|mount|umount|remount|pivot_root|"
     r"unix|dbus|file|link|change_profile|change_hat|rlimit|userns|"
@@ -47,25 +46,25 @@ _RE_CAPABILITY_RULE = re.compile(
     r"^(\s*(?:deny\s+|audit\s+)?capability)\s+([\w][\w,\s]*?)\s*(,?)\s*$"
 )
 _RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
-_RE_BLANK          = re.compile(r"^\s*$")
-_RE_PROFILE_OPEN   = re.compile(r"^(\s*)(profile|hat)\s+")
-_RE_CLOSE_BRACE    = re.compile(r"^\s*\}\s*$")
-_RE_INCLUDE_HASH   = re.compile(r"^(\s*)#include\b")
-_RE_ENDS_COMMA     = re.compile(r",\s*$")
-_RE_NO_TERM        = re.compile(r"(?<!,)\s*$")
+_RE_BLANK = re.compile(r"^\s*$")
+_RE_PROFILE_OPEN = re.compile(r"^(\s*)(profile|hat)\s+")
+_RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*$")
+_RE_INCLUDE_HASH = re.compile(r"^(\s*)#include\b")
+_RE_ENDS_COMMA = re.compile(r",\s*$")
+_RE_NO_TERM = re.compile(r"(?<!,)\s*$")
 
 # Lines that should NOT get a trailing comma added:
 _NO_COMMA_PATTERNS = [
-    re.compile(r"^\s*#"),              # comments
-    re.compile(r"^\s*\{"),            # opening braces
-    re.compile(r"^\s*\}"),            # closing braces
-    re.compile(r"^\s*$"),             # blank lines
-    re.compile(r".*\{\s*$"),          # line ending with {
+    re.compile(r"^\s*#"),  # comments
+    re.compile(r"^\s*\{"),  # opening braces
+    re.compile(r"^\s*\}"),  # closing braces
+    re.compile(r"^\s*$"),  # blank lines
+    re.compile(r".*\{\s*$"),  # line ending with {
     re.compile(r"^\s*(profile|hat)\s"),  # profile / hat headers
-    re.compile(r"^\s*include\b"),     # includes don't need commas
-    re.compile(r"^\s*#include\b"),    # same
+    re.compile(r"^\s*include\b"),  # includes don't need commas
+    re.compile(r"^\s*#include\b"),  # same
     re.compile(r"^\s*@\{[^}]+\}\s*[+]?="),  # variable definitions
-    re.compile(r"^\s*alias\b"),       # aliases
+    re.compile(r"^\s*alias\b"),  # aliases
 ]
 
 
@@ -187,9 +186,9 @@ def _sort_capabilities(line: str) -> str:
     m = _RE_CAPABILITY_RULE.match(line)
     if not m:
         return line
-    prefix    = m.group(1)   # e.g. '  capability'
-    caps_str  = m.group(2).strip()
-    suffix    = m.group(3)   # trailing comma + optional spaces
+    prefix = m.group(1)  # e.g. '  capability'
+    caps_str = m.group(2).strip()
+    suffix = m.group(3)  # trailing comma + optional spaces
 
     caps = sorted(c.strip() for c in caps_str.split(",") if c.strip())
     trailing = "," if suffix.strip() == "," else suffix
@@ -198,6 +197,7 @@ def _sort_capabilities(line: str) -> str:
 
 def _sort_paren_lists(line: str) -> str:
     """Sort comma/space-separated lists inside parentheses."""
+
     def sort_match(m: re.Match) -> str:
         inner = m.group(1)
         # Detect separator
