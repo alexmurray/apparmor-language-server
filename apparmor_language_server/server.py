@@ -531,8 +531,11 @@ def _word_at_position(line: str, ch: int) -> str:
 def main():
     import argparse
 
+    # set log level from env var, default to INFO
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(
+            logging, os.getenv("APPARMOR_LSP_LOG_LEVEL", "INFO").upper(), logging.INFO
+        ),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
