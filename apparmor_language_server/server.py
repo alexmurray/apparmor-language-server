@@ -21,6 +21,7 @@ Run the server:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Optional
 
@@ -133,9 +134,10 @@ class AppArmorLanguageServer(LanguageServer):
     def _publish_diagnostics(self, uri: str, text: str) -> None:
         doc, errors = self.parse_and_cache(uri, text)
         diags = get_diagnostics(doc, errors, text)
-        self.text_document_publish_diagnostics(
-            PublishDiagnosticsParams(uri=uri, diagnostics=diags)
-        )
+        for uri, d in diags.items():
+            self.text_document_publish_diagnostics(
+                PublishDiagnosticsParams(uri=uri, diagnostics=d)
+            )
 
 
 # ── Server instance ───────────────────────────────────────────────────────────
@@ -262,10 +264,20 @@ def definition(
                     )
                 ]
 
-    # Find a profile name reference
     word = _word_at_position(line_text, position.character)
     if word:
+        logger.info(
+            "Definition request for word '%s' at %s:%d:%d",
+            word,
+            uri,
+            position.line,
+            position.character,
+        )
+        # Find a profile name reference
         for profile in doc.profiles:
+            logger.debug(
+                "Checking profile '%s' for match with '%s'", profile.name, word
+            )
             if profile.name == word:
                 return [
                     Location(
@@ -275,6 +287,22 @@ def definition(
                                 profile.range.start.line, profile.range.start.character
                             ),
                             end=Position(profile.range.start.line, 999),
+                        ),
+                    )
+                ]
+
+        for name, variable in doc.variables.items():
+            logger.debug("Checking variable '%s' for match with '%s'", name, word)
+            if name == word:
+                return [
+                    Location(
+                        uri=variable.uri,
+                        range=Range(
+                            start=Position(
+                                variable.range.start.line,
+                                variable.range.start.character,
+                            ),
+                            end=Position(variable.range.start.line, 999),
                         ),
                     )
                 ]
@@ -482,10 +510,15 @@ def range_formatting(
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 
+_RE_VARIABLE = re.compile(r"@{[A-Za-z0-9_]+}")
 _RE_WORD = re.compile(r"[A-Za-z_/][A-Za-z0-9_/.-]*")
 
 
 def _word_at_position(line: str, ch: int) -> str:
+    # first try variables, then fallback to generic words
+    for m in _RE_VARIABLE.finditer(line):
+        if m.start() <= ch <= m.end():
+            return m.group()
     for m in _RE_WORD.finditer(line):
         if m.start() <= ch <= m.end():
             return m.group()

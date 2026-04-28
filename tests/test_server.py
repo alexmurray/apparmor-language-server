@@ -53,6 +53,14 @@ profile broken {
   /etc/hosts rwXXXXX,
 """
 
+PROFILE_USING_HOME = """\
+include <tunables/home>
+
+profile home-user {
+  @{HOME}/ r,
+}
+"""
+
 # ── Parser tests ──────────────────────────────────────────────────────────────
 
 
@@ -61,6 +69,7 @@ class TestParser:
         doc, errors = parse_document("file:///test.aa", SIMPLE_PROFILE)
         assert len(doc.profiles) == 1
         assert doc.profiles[0].name == "myapp"
+        assert len(errors) == 0
 
     def test_include_detected(self):
         doc, _ = parse_document("file:///test.aa", SIMPLE_PROFILE)
@@ -84,6 +93,11 @@ class TestParser:
     def test_variable_definition(self):
         doc, _ = parse_document("file:///test.aa", MULTI_PROFILE)
         assert "@{HOME}" in doc.variables
+
+    def test_profile_using_home_variable(self):
+        doc, errors = parse_document("file:///test.aa", PROFILE_USING_HOME)
+        assert "@{HOME}" in doc.variables
+        assert len(errors) == 0
 
     def test_multiple_profiles(self):
         doc, _ = parse_document("file:///test.aa", MULTI_PROFILE)
@@ -115,36 +129,41 @@ class TestDiagnostics:
     def test_no_diags_on_valid_profile(self):
         doc, errors = parse_document("file:///test.aa", SIMPLE_PROFILE)
         diags = get_diagnostics(doc, errors, SIMPLE_PROFILE)
+        all_diags = [d for sublist in diags.values() for d in sublist]
         # No errors (may have info/warnings)
-        error_diags = [d for d in diags if d.severity and d.severity.value <= 1]
+        error_diags = [d for d in all_diags if d.severity and d.severity.value <= 1]
         assert len(error_diags) == 0
 
     def test_unknown_capability_flagged(self):
         src = "profile x { capability bad_capability_xyz, }\n"
         doc, errors = parse_document("file:///test.aa", src)
         diags = get_diagnostics(doc, errors, src)
-        codes = [d.code for d in diags]
+        all_diags = [d for sublist in diags.values() for d in sublist]
+        codes = [d.code for d in all_diags]
         assert "unknown-capability" in codes
 
     def test_empty_profile_warning(self):
         src = "profile empty { }\n"
         doc, errors = parse_document("file:///test.aa", src)
         diags = get_diagnostics(doc, errors, src)
-        codes = [d.code for d in diags]
+        all_diags = [d for sublist in diags.values() for d in sublist]
+        codes = [d.code for d in all_diags]
         assert "empty-profile" in codes
 
     def test_duplicate_capability_warning(self):
         src = "profile x {\n  capability kill,\n  capability kill,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         diags = get_diagnostics(doc, errors, src)
-        codes = [d.code for d in diags]
+        all_diags = [d for sublist in diags.values() for d in sublist]
+        codes = [d.code for d in all_diags]
         assert "duplicate-capability" in codes
 
     def test_dangerous_exec_warning(self):
         src = "profile x {\n  /usr/bin/sudo ux,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         diags = get_diagnostics(doc, errors, src)
-        codes = [d.code for d in diags]
+        all_diags = [d for sublist in diags.values() for d in sublist]
+        codes = [d.code for d in all_diags]
         assert "dangerous-exec" in codes
 
 
@@ -183,6 +202,14 @@ class TestCompletions:
         result = self._complete("  @{HO", 6)
         labels = {item.label for item in result.items}
         assert "@{HOME}" in labels
+
+    def test_abi_completions(self):
+        result = self._complete("  abi <abi/", 11)
+        labels = {item.label for item in result.items}
+        # at least one ABI should be offered
+        assert len(labels) >= 1
+        # all ABI completions should be in the abi/ namespace
+        assert all("abi/" in label for label in labels)
 
     def test_include_completions(self):
         result = self._complete("  include <abstractions/", 23)

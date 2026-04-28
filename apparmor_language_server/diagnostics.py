@@ -88,12 +88,12 @@ def get_diagnostics(
     doc: DocumentNode,
     parse_errors: list[ParseError],
     text: str,
-) -> list[Diagnostic]:
-    diags: list[Diagnostic] = []
+) -> dict[str, list[Diagnostic]]:
+    diags: dict[str, list[Diagnostic]] = {}
 
     # Convert parser errors first
     for err in parse_errors:
-        diags.append(
+        diags.setdefault(err.uri, []).append(
             Diagnostic(
                 range=Range(
                     start=Position(err.line, err.character),
@@ -117,24 +117,24 @@ def get_diagnostics(
 
 def _check_node(
     node: Node,
-    diags: list[Diagnostic],
+    diags: dict[str, list[Diagnostic]],
     defined_vars: set[str],
     uri: str,
 ) -> None:
     if isinstance(node, ProfileNode):
-        _check_profile(node, diags, defined_vars, uri)
+        _check_profile(node, diags, uri, defined_vars)
     elif isinstance(node, CapabilityNode):
-        _check_capability(node, diags)
+        _check_capability(node, diags, uri)
     elif isinstance(node, NetworkNode):
-        _check_network(node, diags)
+        _check_network(node, diags, uri)
     elif isinstance(node, FileRuleNode):
-        _check_file_rule(node, diags, defined_vars)
+        _check_file_rule(node, diags, uri, defined_vars)
     elif isinstance(node, ABINode):
         _check_abi(node, diags, uri)
     elif isinstance(node, IncludeNode):
         _check_include(node, diags, uri)
     elif isinstance(node, GenericRuleNode):
-        _check_generic(node, diags, defined_vars)
+        _check_generic(node, diags, uri, defined_vars)
 
 
 # ── Profile checks ────────────────────────────────────────────────────────────
@@ -142,15 +142,15 @@ def _check_node(
 
 def _check_profile(
     node: ProfileNode,
-    diags: list[Diagnostic],
-    defined_vars: set[str],
+    diags: dict[str, list[Diagnostic]],
     uri: str,
+    defined_vars: set[str],
 ) -> None:
     # Invalid flags
     for flag in node.flags:
         flag_name = flag.split("=")[0].strip()
         if flag_name and flag_name not in PROFILE_FLAGS:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unknown profile flag '{flag_name}'.",
@@ -162,7 +162,7 @@ def _check_profile(
     # Empty body warning
     non_comment_children = [c for c in node.children if not isinstance(c, CommentNode)]
     if not non_comment_children:
-        diags.append(
+        diags.setdefault(uri, []).append(
             _diag(
                 node,
                 f"Profile '{node.name}' has an empty body.",
@@ -182,7 +182,7 @@ def _check_profile(
                     deny_caps.add(cap)
                 else:
                     if cap in seen_caps:
-                        diags.append(
+                        diags.setdefault(uri, []).append(
                             _diag(
                                 child,
                                 f"Capability '{cap}' is declared more than once.",
@@ -196,7 +196,7 @@ def _check_profile(
     # deny + allow same cap
     conflict = set(seen_caps.keys()) & deny_caps
     for cap in conflict:
-        diags.append(
+        diags.setdefault(uri, []).append(
             _diag(
                 seen_caps[cap],
                 f"Capability '{cap}' is both allowed and denied in this profile.",
@@ -216,11 +216,13 @@ def _check_profile(
 # ── Capability checks ─────────────────────────────────────────────────────────
 
 
-def _check_capability(node: CapabilityNode, diags: list[Diagnostic]) -> None:
+def _check_capability(
+    node: CapabilityNode, diags: dict[str, list[Diagnostic]], uri: str
+) -> None:
     for cap in node.capabilities:
         c = cap.strip().lower()
         if c and c not in CAPABILITIES:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unknown capability '{cap}'. "
@@ -234,14 +236,16 @@ def _check_capability(node: CapabilityNode, diags: list[Diagnostic]) -> None:
 # ── Network checks ────────────────────────────────────────────────────────────
 
 
-def _check_network(node: NetworkNode, diags: list[Diagnostic]) -> None:
+def _check_network(
+    node: NetworkNode, diags: dict[str, list[Diagnostic]], uri: str
+) -> None:
     parts = node.rest.split()
     for part in parts:
         p = part.strip().rstrip(",").lower()
         if not p:
             continue
         if p not in NETWORK_FAMILIES and p not in NETWORK_TYPES:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unknown network qualifier '{part}'. Expected a family "
@@ -259,7 +263,8 @@ _VAR_REF = re.compile(r"@\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 def _check_file_rule(
     node: FileRuleNode,
-    diags: list[Diagnostic],
+    diags: dict[str, list[Diagnostic]],
+    uri: str,
     defined_vars: set[str],
 ) -> None:
     # Check for invalid permission characters
@@ -268,7 +273,7 @@ def _check_file_rule(
     # Valid single-char perms
     for ch in perm_str:
         if ch not in _VALID_FILE_PERMS:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unknown file permission character '{ch}' in '{perm_str}'.",
@@ -281,7 +286,7 @@ def _check_file_rule(
     # Warn about dangerous unconfined exec
     for dp in _DANGEROUS_PERMS:
         if dp in perm_str:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Permission '{dp}' allows unconfined execution — "
@@ -294,7 +299,7 @@ def _check_file_rule(
 
     # Warn about 'w' that should probably be 'a' (append)
     if "w" in perm_str and node.path.endswith((".log", ".out", ".txt")):
-        diags.append(
+        diags.setdefault(uri, []).append(
             _diag(
                 node,
                 f"'{node.path}' looks like a log/output file. "
@@ -307,7 +312,7 @@ def _check_file_rule(
     # Undefined variable references in path
     for var_ref in _VAR_REF.findall(node.path):
         if var_ref not in defined_vars:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Variable '{var_ref}' is used but never defined.",
@@ -322,12 +327,12 @@ def _check_file_rule(
 
 def _check_abi(
     node: ABINode,
-    diags: list[Diagnostic],
+    diags: dict[str, list[Diagnostic]],
     uri: str,
 ) -> None:
     resolved = resolve_include_path(node.path, uri)
     if resolved is None:
-        diags.append(
+        diags.setdefault(uri, []).append(
             _diag(
                 node,
                 f"ABI target '{node.path}' could not be found on disk.",
@@ -342,12 +347,12 @@ def _check_abi(
 
 def _check_include(
     node: IncludeNode,
-    diags: list[Diagnostic],
+    diags: dict[str, list[Diagnostic]],
     uri: str,
 ) -> None:
     resolved = resolve_include_path(node.path, uri)
     if resolved is None:
-        diags.append(
+        diags.setdefault(uri, []).append(
             _diag(
                 node,
                 f"Include target '{node.path}' could not be found on disk.",
@@ -388,7 +393,8 @@ _KNOWN_RULE_KEYWORDS = {
 
 def _check_generic(
     node: GenericRuleNode,
-    diags: list[Diagnostic],
+    diags: dict[str, list[Diagnostic]],
+    uri: str,
     defined_vars: set[str],
 ) -> None:
     kw = node.keyword.lower()
@@ -399,7 +405,7 @@ def _check_generic(
     if kw not in _KNOWN_RULE_KEYWORDS:
         # Could be a file path starting with a letter (unusual but valid)
         if not kw.startswith("/") and not kw.startswith("@"):
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unrecognised rule keyword '{node.keyword}'.",
@@ -412,7 +418,7 @@ def _check_generic(
     full = node.raw
     for var_ref in _VAR_REF.findall(full):
         if var_ref not in defined_vars:
-            diags.append(
+            diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Variable '{var_ref}' is used but never defined.",

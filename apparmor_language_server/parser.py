@@ -13,15 +13,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
 RE_BLANK = re.compile(r"^\s*$")
 RE_COMMENT = re.compile(r"^\s*#.*$")
 RE_ABI_GLOB = re.compile(r"""^\s*#?abi\s+[<"]([^>"]+)[>"],""")
-RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]""")
-RE_INCLUDE_IF = re.compile(r"""^\s*include\s+if\s+exists\s+[<"]([^>"]+)[>"]""")
+RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]?""")
+RE_INCLUDE_IF = re.compile(r"""^\s*include\s+if\s+exists\s+[<"]([^>"]+)[>"]?""")
 RE_VARIABLE_DEF = re.compile(r"^\s*(@\{[A-Za-z_][A-Za-z0-9_]*\})\s*[+]?=\s*(.*)$")
 
 # Matches all profile/sub-profile opening lines, e.g.:
@@ -117,6 +117,7 @@ class Range:
 
 @dataclass
 class Node:
+    uri: str
     range: Range
     raw: str
 
@@ -200,8 +201,9 @@ class DocumentNode:
 
 
 class ParseError(Exception):
-    def __init__(self, message: str, line: int, character: int = 0):
+    def __init__(self, message: str, uri: str, line: int, character: int = 0):
         super().__init__(message)
+        self.uri = uri
         self.line = line
         self.character = character
 
@@ -237,6 +239,9 @@ class Parser:
                 doc.abi = node
             if isinstance(node, IncludeNode):
                 doc.includes.append(node)
+                inc_doc = self._parse_include_node(node)
+                for inc in inc_doc:
+                    self._inherit_document_info(doc, inc)
             elif isinstance(node, VariableDefNode):
                 doc.variables[node.name] = node
             elif isinstance(node, ProfileNode):
@@ -260,10 +265,71 @@ class Parser:
         ec = len(el)
         return Range(Position(start_line, sc), Position(end_line, ec))
 
+    def _parse_include_path(self, path: Path) -> List[DocumentNode]:
+        # assume path is a directory
+        docs = []
+        try:
+            for entry in path.iterdir():
+                with open(entry, "r") as f:
+                    text = f.read()
+                sub_parser = Parser(uri=str(entry), text=text)
+                docs.append(sub_parser.parse())
+        except NotADirectoryError:
+            with open(path, "r") as f:
+                text = f.read()
+            sub_parser = Parser(uri=str(path), text=text)
+            docs.append(sub_parser.parse())
+        return docs
+
+    def _parse_include_node(self, include_node: IncludeNode) -> List[DocumentNode]:
+        docs = []
+        path = resolve_include_path(include_node.path, self._uri)
+        if path is None:
+            # is only an error when this is not a conditional include
+            if not include_node.conditional:
+                self.errors.append(
+                    ParseError(
+                        f"Included file '{include_node.path}' not found",
+                        include_node.path,
+                        include_node.range.start.line,
+                        include_node.range.start.character,
+                    )
+                )
+        else:
+            try:
+                docs = self._parse_include_path(path)
+            except Exception as e:
+                self.errors.append(
+                    ParseError(
+                        f"Error reading included file '{include_node.path}': {e}",
+                        include_node.path,
+                        include_node.range.start.line,
+                        include_node.range.start.character,
+                    )
+                )
+        return docs
+
+    def _inherit_document_info(self, doc: DocumentNode, included: DocumentNode) -> None:
+        for inc in included.includes:
+            if inc not in doc.includes:
+                doc.includes.append(inc)
+                for inc_doc in (
+                    self._parse_include_node(inc) for inc in included.includes
+                ):
+                    for inc in inc_doc:
+                        self._inherit_document_info(doc, inc)
+        for var in included.variables.values():
+            if var.name not in doc.variables:
+                doc.variables[var.name] = var
+
     def _collect_includes(self, profile: ProfileNode, doc: DocumentNode) -> None:
         for child in profile.children:
             if isinstance(child, IncludeNode):
                 doc.includes.append(child)
+                inc_doc = self._parse_include_node(child)
+                for inc in inc_doc:
+                    self._inherit_document_info(doc, inc)
+
             elif isinstance(child, ProfileNode):
                 self._collect_includes(child, doc)
 
@@ -320,6 +386,7 @@ class Parser:
         ln, raw = self._pos, self._lines[self._pos]
         self._advance()
         return CommentNode(
+            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             text=raw.strip().lstrip("#").strip(),
@@ -332,6 +399,7 @@ class Parser:
         angle = "<" in raw and ">" in raw
         self._advance()
         return ABINode(
+            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             path=path,
@@ -340,12 +408,13 @@ class Parser:
 
     def _parse_include(self) -> IncludeNode:
         ln, raw = self._pos, self._lines[self._pos]
-        cond = bool(RE_INCLUDE_IF.match(raw))
-        m = RE_INCLUDE_GLOB.match(raw)
+        m = RE_INCLUDE_GLOB.match(raw) or RE_INCLUDE_IF.match(raw)
         path = m.group(1) if m else ""
+        cond = m.re == RE_INCLUDE_IF if m else False
         angle = "<" in raw and ">" in raw
         self._advance()
         return IncludeNode(
+            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             path=path,
@@ -357,10 +426,11 @@ class Parser:
         ln, raw = self._pos, self._lines[self._pos]
         m = RE_VARIABLE_DEF.match(raw)
         self._advance()
-        name = m.group(1)
-        values = [v for v in (m.group(2) or "").split() if v]
+        name = m.group(1) if m else ""
+        values = [v for v in (m.group(2) if m else "").split() if v]
         augmented = "+=" in raw
         return VariableDefNode(
+            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             name=name,
@@ -373,6 +443,7 @@ class Parser:
         m = RE_ALIAS.match(raw)
         self._advance()
         return AliasNode(
+            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             original=m.group(1) if m else "",
@@ -410,6 +481,7 @@ class Parser:
             children = self._parse_inline_rules(inner_text, start_line)
             self._advance()
             return ProfileNode(
+                uri=self._uri,
                 range=self._make_range(start_line, start_line),
                 raw=raw_start,
                 name=name,
@@ -430,6 +502,7 @@ class Parser:
                 end_line = self._pos
                 self._advance()
                 return ProfileNode(
+                    uri=self._uri,
                     range=self._make_range(start_line, end_line),
                     raw=raw_start,
                     name=name,
@@ -444,6 +517,7 @@ class Parser:
                 end_line = self._pos
                 self._advance()
                 return ProfileNode(
+                    uri=self._uri,
                     range=self._make_range(start_line, end_line),
                     raw=raw_start,
                     name=name,
@@ -455,9 +529,10 @@ class Parser:
 
         # EOF without closing brace
         self.errors.append(
-            ParseError(f"Profile '{name}' not closed before EOF", start_line)
+            ParseError(f"Profile '{name}' not closed before EOF", self._uri, start_line)
         )
         return ProfileNode(
+            uri=self._uri,
             range=self._make_range(start_line, self._pos - 1),
             raw=raw_start,
             name=name,
@@ -499,6 +574,7 @@ class Parser:
                 caps = caps_raw.split()
             mods = self._leading_mods(stripped)
             return CapabilityNode(
+                uri=self._uri,
                 range=self._make_range(ln, ln),
                 raw=raw,
                 modifiers=mods,
@@ -509,6 +585,7 @@ class Parser:
         mn = RE_NETWORK.match(raw)
         if mn:
             return NetworkNode(
+                uri=self._uri,
                 range=self._make_range(ln, ln),
                 raw=raw,
                 modifiers=self._leading_mods(stripped),
@@ -521,6 +598,7 @@ class Parser:
             mods_str = mf.group("mods") or ""
             mods = mods_str.split()
             return FileRuleNode(
+                uri=self._uri,
                 range=self._make_range(ln, ln),
                 raw=raw,
                 modifiers=mods,
@@ -534,6 +612,7 @@ class Parser:
         keyword = tokens[0] if tokens else ""
         content = stripped[len(keyword) :].strip() if tokens else ""
         return GenericRuleNode(
+            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             keyword=keyword,
@@ -569,7 +648,6 @@ def resolve_include_path(
         search_dirs = [
             Path("/etc/apparmor.d"),
             Path("/usr/share/apparmor"),
-            Path("/usr/share/apparmor.d"),
         ]
 
     candidate = Path(include_path)
