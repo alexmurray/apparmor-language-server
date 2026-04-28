@@ -17,6 +17,13 @@ apps:
     plugs:
       - network
       - home
+      - etc-apparmor-d
+
+plugs:
+  etc-apparmor-d:
+    interface: system-files
+    read:
+      - /etc/apparmor.d
 parts:
   apparmor-language-server:
     plugin: python
