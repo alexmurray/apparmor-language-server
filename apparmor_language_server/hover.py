@@ -25,17 +25,25 @@ from lsprotocol.types import (
 
 from .constants import (
     CAPABILITY_DEFS,
+    DBUS_BUS_DEFS,
+    DBUS_PERMISSION_DEFS,
     EXECUTE_PERMISSIONS,
     FILE_PERMISSIONS,
     FLAG_DEFS,
+    IO_URING_PERMISSION_DEFS,
     KEYWORD_DEFS,
+    MOUNT_OPTION_DEFS,
+    MQUEUE_PERMISSION_DEFS,
     NETWORK_DOMAINS,
+    NETWORK_PERMISSIONS,
     NETWORK_TYPES,
     PTRACE_DEFS,
     QUALIFIER_DEFS,
     RE_FILE_PERMISSIONS,
+    RLIMIT_DEFS,
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
+    UNIX_TYPES,
 )
 from .parser import (
     ABINode,
@@ -165,6 +173,12 @@ def _hover_network(line_text: str, ch: int) -> Optional[Hover]:
             ws,
             we,
         )
+    if word in NETWORK_PERMISSIONS:
+        return _make_hover(
+            f"**Network permission `{word}`**\n\nAllows `{word}` operations on network sockets.",
+            ws,
+            we,
+        )
     return None
 
 
@@ -254,11 +268,104 @@ def _hover_generic(node: GenericRuleNode, line_text: str, ch: int) -> Optional[H
         return None
     if word in QUALIFIER_DEFS:
         return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
-    if node.keyword == "ptrace" and word in PTRACE_DEFS:
-        return _make_hover(PTRACE_DEFS[word].doc, ws, we)
+
+    kw = node.keyword
+    h: Optional[Hover] = None
+    if kw == "ptrace":
+        h = _hover_ptrace_token(word, ws, we)
+    elif kw == "dbus":
+        h = _hover_dbus_token(word, ws, we)
+    elif kw == "unix":
+        h = _hover_unix_token(word, ws, we)
+    elif kw == "mount":
+        h = _hover_mount_token(word, ws, we)
+    elif kw == "set":
+        h = _hover_rlimit_token(word, ws, we)
+    elif kw == "io_uring":
+        h = _hover_io_uring_token(word, ws, we)
+    elif kw == "mqueue":
+        h = _hover_mqueue_token(word, ws, we)
+    if h is not None:
+        return h
+
     kw_def = KEYWORD_DEFS.get(word)
     if kw_def:
         return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+# ── Per-keyword token handlers ────────────────────────────────────────────────
+
+
+def _hover_ptrace_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    perm_def = PTRACE_DEFS.get(word)
+    if perm_def:
+        return _make_hover(perm_def.doc, ws, we)
+    return None
+
+
+def _hover_dbus_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    kw_def = DBUS_PERMISSION_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    kw_def = DBUS_BUS_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+def _hover_unix_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    if word in NETWORK_PERMISSIONS:
+        return _make_hover(
+            f"**Unix socket permission `{word}`**\n\nAllows `{word}` operations on Unix domain sockets.",
+            ws,
+            we,
+        )
+    if word in UNIX_TYPES:
+        return _make_hover(
+            f"**Unix socket type `{word}`**\n\nRestricts the rule to `{word}` Unix domain sockets.",
+            ws,
+            we,
+        )
+    return None
+
+
+def _hover_mount_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    kw_def = MOUNT_OPTION_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+def _hover_rlimit_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    # "set" and "rlimit" are both part of the two-word keyword.
+    if word in ("set", "rlimit"):
+        kw_def = KEYWORD_DEFS.get("set rlimit")
+        if kw_def:
+            return _make_hover(kw_def.doc, ws, we)
+    kw_def = RLIMIT_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+def _hover_io_uring_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    kw_def = IO_URING_PERMISSION_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+def _hover_mqueue_token(word: str, ws: int, we: int) -> Optional[Hover]:
+    kw_def = MQUEUE_PERMISSION_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    if word in ("posix", "sysv"):
+        return _make_hover(
+            f"**mqueue type `{word}`**\n\nMessage queue implementation: `{word}`.",
+            ws,
+            we,
+        )
     return None
 
 
@@ -276,7 +383,9 @@ def _make_hover(md: str, start: int, end: int) -> Hover:
     return Hover(
         contents=MarkupContent(kind=MarkupKind.Markdown, value=md),
         range=Range(
-            start=Position(0, start),  # line number is adjusted by the caller in server.py
+            start=Position(
+                0, start
+            ),  # line number is adjusted by the caller in server.py
             end=Position(0, end),
         ),
     )

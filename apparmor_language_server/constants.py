@@ -345,85 +345,235 @@ PTRACE_PERMISSIONS: list[str] = list(PTRACE_DEFS.keys())
 
 # ── Mount ─────────────────────────────────────────────────────────────────────
 
-MOUNT_OPTIONS: list[str] = [
-    "ro",
-    "rw",
-    "suid",
-    "nosuid",
-    "dev",
-    "nodev",
-    "exec",
-    "noexec",
-    "sync",
-    "async",
-    "remount",
-    "mand",
-    "nomand",
-    "dirsync",
-    "noatime",
-    "nodiratime",
-    "bind",
-    "rbind",
-    "move",
-    "silent",
-    "acl",
-    "noacl",
-    "relatime",
-    "iversion",
-    "noiversion",
-    "strictatime",
-    "lazytime",
-    "nolazytime",
-    "unbindable",
-    "runbindable",
-    "private",
-    "rprivate",
-    "shared",
-    "rshared",
-    "slave",
-    "rslave",
-]
+MOUNT_OPTION_DEFS: dict[str, KeywordDef] = {
+    "ro": KeywordDef(doc="**Mount option `ro`**\n\nMount read-only."),
+    "rw": KeywordDef(doc="**Mount option `rw`**\n\nMount read-write."),
+    "suid": KeywordDef(
+        doc="**Mount option `suid`**\n\nAllow set-user-ID and set-group-ID bits to take effect."
+    ),
+    "nosuid": KeywordDef(
+        doc="**Mount option `nosuid`**\n\nIgnore set-user-ID and set-group-ID bits."
+    ),
+    "dev": KeywordDef(doc="**Mount option `dev`**\n\nAllow access to device files."),
+    "nodev": KeywordDef(
+        doc="**Mount option `nodev`**\n\nDisallow access to device files."
+    ),
+    "exec": KeywordDef(
+        doc="**Mount option `exec`**\n\nAllow execution of binaries on this filesystem."
+    ),
+    "noexec": KeywordDef(
+        doc="**Mount option `noexec`**\n\nDisallow execution of binaries on this filesystem."
+    ),
+    "sync": KeywordDef(doc="**Mount option `sync`**\n\nAll I/O is done synchronously."),
+    "async": KeywordDef(
+        doc="**Mount option `async`**\n\nAll I/O is done asynchronously."
+    ),
+    "remount": KeywordDef(
+        doc="**Mount option `remount`**\n\nRemount an already-mounted filesystem with new options."
+    ),
+    "mand": KeywordDef(doc="**Mount option `mand`**\n\nAllow mandatory file locking."),
+    "nomand": KeywordDef(
+        doc="**Mount option `nomand`**\n\nDisallow mandatory file locking."
+    ),
+    "dirsync": KeywordDef(
+        doc="**Mount option `dirsync`**\n\nDirectory updates are written synchronously."
+    ),
+    "noatime": KeywordDef(
+        doc="**Mount option `noatime`**\n\nDo not update file access times."
+    ),
+    "nodiratime": KeywordDef(
+        doc="**Mount option `nodiratime`**\n\nDo not update directory access times."
+    ),
+    "bind": KeywordDef(
+        doc="**Mount option `bind`**\n\nBind-mount — mirror a subtree at another location."
+    ),
+    "rbind": KeywordDef(doc="**Mount option `rbind`**\n\nRecursive bind-mount."),
+    "move": KeywordDef(
+        doc="**Mount option `move`**\n\nAtomically move a mount point to a new location."
+    ),
+    "silent": KeywordDef(
+        doc="**Mount option `silent`**\n\nSuppress kernel messages for this mount."
+    ),
+    "acl": KeywordDef(doc="**Mount option `acl`**\n\nUse POSIX Access Control Lists."),
+    "noacl": KeywordDef(
+        doc="**Mount option `noacl`**\n\nDo not use POSIX Access Control Lists."
+    ),
+    "relatime": KeywordDef(
+        doc="**Mount option `relatime`**\n\nUpdate access time only when it is older than the modify/change time."
+    ),
+    "iversion": KeywordDef(
+        doc="**Mount option `iversion`**\n\nIncrement `i_version` on each modification."
+    ),
+    "noiversion": KeywordDef(
+        doc="**Mount option `noiversion`**\n\nDo not increment `i_version`."
+    ),
+    "strictatime": KeywordDef(
+        doc="**Mount option `strictatime`**\n\nAlways update access times (overrides `relatime`/`noatime`)."
+    ),
+    "lazytime": KeywordDef(
+        doc="**Mount option `lazytime`**\n\nLazily flush timestamp updates to disk."
+    ),
+    "nolazytime": KeywordDef(
+        doc="**Mount option `nolazytime`**\n\nDo not use lazy timestamp updates."
+    ),
+    "unbindable": KeywordDef(
+        doc="**Mount option `unbindable`**\n\nMake this mount unbindable (cannot be bind-mounted)."
+    ),
+    "runbindable": KeywordDef(
+        doc="**Mount option `runbindable`**\n\nRecursively unbindable."
+    ),
+    "private": KeywordDef(
+        doc="**Mount option `private`**\n\nDo not propagate mount events to or from peers."
+    ),
+    "rprivate": KeywordDef(doc="**Mount option `rprivate`**\n\nRecursively private."),
+    "shared": KeywordDef(
+        doc="**Mount option `shared`**\n\nPropagate mount events to peer mounts."
+    ),
+    "rshared": KeywordDef(doc="**Mount option `rshared`**\n\nRecursively shared."),
+    "slave": KeywordDef(
+        doc="**Mount option `slave`**\n\nReceive propagation from master but do not propagate back."
+    ),
+    "rslave": KeywordDef(doc="**Mount option `rslave`**\n\nRecursively slave."),
+}
+
+MOUNT_OPTIONS: list[str] = list(MOUNT_OPTION_DEFS.keys())
 
 # ── Resource limits ───────────────────────────────────────────────────────────
 
-RLIMIT_TYPES: list[str] = [
-    "cpu",
-    "fsize",
-    "data",
-    "stack",
-    "core",
-    "rss",
-    "nofile",
-    "ofile",
-    "as",
-    "nproc",
-    "memlock",
-    "locks",
-    "sigpending",
-    "msgqueue",
-    "nice",
-    "rtprio",
-    "rttime",
-]
+RLIMIT_DEFS: dict[str, KeywordDef] = {
+    "cpu": KeywordDef(doc="**Resource limit `cpu`**\n\nCPU time limit (seconds)."),
+    "fsize": KeywordDef(doc="**Resource limit `fsize`**\n\nMaximum file size (bytes)."),
+    "data": KeywordDef(
+        doc="**Resource limit `data`**\n\nMaximum data segment size (bytes)."
+    ),
+    "stack": KeywordDef(
+        doc="**Resource limit `stack`**\n\nMaximum stack size (bytes)."
+    ),
+    "core": KeywordDef(
+        doc="**Resource limit `core`**\n\nMaximum core dump file size (bytes)."
+    ),
+    "rss": KeywordDef(
+        doc="**Resource limit `rss`**\n\nMaximum resident set size (bytes)."
+    ),
+    "nofile": KeywordDef(
+        doc="**Resource limit `nofile`**\n\nMaximum number of open file descriptors."
+    ),
+    "ofile": KeywordDef(doc="**Resource limit `ofile`**\n\nAlias for `nofile`."),
+    "as": KeywordDef(
+        doc="**Resource limit `as`**\n\nMaximum virtual address space size (bytes)."
+    ),
+    "nproc": KeywordDef(
+        doc="**Resource limit `nproc`**\n\nMaximum number of processes."
+    ),
+    "memlock": KeywordDef(
+        doc="**Resource limit `memlock`**\n\nMaximum locked-in-memory address space (bytes)."
+    ),
+    "locks": KeywordDef(
+        doc="**Resource limit `locks`**\n\nMaximum number of file locks."
+    ),
+    "sigpending": KeywordDef(
+        doc="**Resource limit `sigpending`**\n\nMaximum number of queued signals."
+    ),
+    "msgqueue": KeywordDef(
+        doc="**Resource limit `msgqueue`**\n\nMaximum bytes in POSIX message queues."
+    ),
+    "nice": KeywordDef(
+        doc="**Resource limit `nice`**\n\nCeiling on the process's nice level."
+    ),
+    "rtprio": KeywordDef(
+        doc="**Resource limit `rtprio`**\n\nMaximum real-time scheduling priority."
+    ),
+    "rttime": KeywordDef(
+        doc="**Resource limit `rttime`**\n\nTimeout for real-time tasks without a blocking syscall (microseconds)."
+    ),
+}
+
+RLIMIT_TYPES: list[str] = list(RLIMIT_DEFS.keys())
 
 # ── DBus ──────────────────────────────────────────────────────────────────────
 
-DBUS_PERMISSIONS: list[str] = [
-    "send",
-    "receive",
-    "bind",
-    "eavesdrop",
-    "r",
-    "w",
-    "rw",
-    "read",
-    "write",
-]
+DBUS_PERMISSION_DEFS: dict[str, KeywordDef] = {
+    "send": KeywordDef(
+        doc="**D-Bus permission `send`**\n\nAllow sending D-Bus messages."
+    ),
+    "receive": KeywordDef(
+        doc="**D-Bus permission `receive`**\n\nAllow receiving D-Bus messages."
+    ),
+    "bind": KeywordDef(
+        doc="**D-Bus permission `bind`**\n\nAllow binding a well-known D-Bus service name."
+    ),
+    "eavesdrop": KeywordDef(
+        doc="**D-Bus permission `eavesdrop`**\n\nAllow eavesdropping on all D-Bus messages (requires privileged bus config)."
+    ),
+    "r": KeywordDef(
+        doc="**D-Bus permission `r`**\n\nShorthand for `read` — allow receiving D-Bus messages."
+    ),
+    "w": KeywordDef(
+        doc="**D-Bus permission `w`**\n\nShorthand for `write` — allow sending D-Bus messages."
+    ),
+    "rw": KeywordDef(
+        doc="**D-Bus permission `rw`**\n\nShorthand for `read write` — allow sending and receiving."
+    ),
+    "read": KeywordDef(
+        doc="**D-Bus permission `read`**\n\nAllow reading (receiving) D-Bus messages."
+    ),
+    "write": KeywordDef(
+        doc="**D-Bus permission `write`**\n\nAllow writing (sending) D-Bus messages."
+    ),
+}
 
-DBUS_BUSES: list[str] = [
-    "system",
-    "session",
-]
+DBUS_PERMISSIONS: list[str] = list(DBUS_PERMISSION_DEFS.keys())
+
+DBUS_BUS_DEFS: dict[str, KeywordDef] = {
+    "system": KeywordDef(
+        doc="**D-Bus bus `system`**\n\nThe system-wide D-Bus message bus (`/run/dbus/system_bus_socket`)."
+    ),
+    "session": KeywordDef(
+        doc="**D-Bus bus `session`**\n\nThe per-user D-Bus session bus."
+    ),
+}
+
+DBUS_BUSES: list[str] = list(DBUS_BUS_DEFS.keys())
+
+# ── io_uring ──────────────────────────────────────────────────────────────────
+
+IO_URING_PERMISSION_DEFS: dict[str, KeywordDef] = {
+    "sqpoll": KeywordDef(
+        doc="**io_uring permission `sqpoll`**\n\nAllow use of `IORING_SETUP_SQPOLL` (kernel submission-queue polling thread)."
+    ),
+    "override_creds": KeywordDef(
+        doc="**io_uring permission `override_creds`**\n\nAllow overriding credentials for io_uring operations."
+    ),
+    "cmd": KeywordDef(
+        doc="**io_uring permission `cmd`**\n\nAllow `IORING_OP_URING_CMD` socket operations."
+    ),
+}
+
+# ── mqueue ────────────────────────────────────────────────────────────────────
+
+MQUEUE_PERMISSION_DEFS: dict[str, KeywordDef] = {
+    "create": KeywordDef(
+        doc="**mqueue permission `create`**\n\nCreate a new message queue."
+    ),
+    "open": KeywordDef(
+        doc="**mqueue permission `open`**\n\nOpen an existing message queue."
+    ),
+    "delete": KeywordDef(
+        doc="**mqueue permission `delete`**\n\nDelete (unlink) a message queue."
+    ),
+    "read": KeywordDef(
+        doc="**mqueue permission `read`**\n\nRead messages from the queue."
+    ),
+    "write": KeywordDef(
+        doc="**mqueue permission `write`**\n\nWrite messages to the queue."
+    ),
+    "getattr": KeywordDef(
+        doc="**mqueue permission `getattr`**\n\nGet message queue attributes."
+    ),
+    "setattr": KeywordDef(
+        doc="**mqueue permission `setattr`**\n\nSet message queue attributes."
+    ),
+}
 
 ## ── Keyword definitions ───────────────────────────────────────────────────────
 # Single source of truth for hover docs, completion snippets, and brief details.

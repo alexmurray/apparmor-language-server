@@ -61,7 +61,9 @@ def _text(result: Hover) -> str:
     return result.contents.value
 
 
-def _rule_text(rule: str, char: int, variables: dict[str, VariableDefNode] | None = None) -> str:
+def _rule_text(
+    rule: str, char: int, variables: dict[str, VariableDefNode] | None = None
+) -> str:
     result = _hover_rule(rule, char, variables)
     assert result is not None, f"Expected hover at char {char} of {rule!r}"
     return _text(result)
@@ -182,9 +184,7 @@ class TestPtraceHover:
         )
 
     def test_hover_ptrace_read_permission(self):
-        assert (
-            "read" in _rule_text("  ptrace (read) peer=@{profile_name},", 12).lower()
-        )
+        assert "read" in _rule_text("  ptrace (read) peer=@{profile_name},", 12).lower()
 
     def test_hover_ptrace_keyword(self):
         assert "ptrace" in _rule_text("  ptrace (trace),", 4).lower()
@@ -249,3 +249,166 @@ class TestVariableHover:
             "  signal (send) peer=@{profile_name},", 23, variables=variables
         )
         assert "profile_name" in text.lower()
+
+
+# ── D-Bus hover ───────────────────────────────────────────────────────────────
+
+
+class TestDbusHover:
+    def test_hover_dbus_keyword(self):
+        assert "dbus" in _rule_text("  dbus send bus=system,", 4).lower()
+
+    def test_hover_dbus_permission_send(self):
+        # char 8 lands within 'send'
+        assert "send" in _rule_text("  dbus send bus=system,", 8).lower()
+
+    def test_hover_dbus_permission_receive(self):
+        assert "receive" in _rule_text("  dbus receive bus=session,", 8).lower()
+
+    def test_hover_dbus_permission_bind(self):
+        assert (
+            "bind" in _rule_text("  dbus bind bus=system name=org.example,", 8).lower()
+        )
+
+    def test_hover_dbus_permission_eavesdrop(self):
+        assert "eavesdrop" in _rule_text("  dbus eavesdrop bus=system,", 8).lower()
+
+    def test_hover_dbus_bus_system(self):
+        # char 18 lands within 'system'
+        assert "system" in _rule_text("  dbus send bus=system,", 18).lower()
+
+    def test_hover_dbus_bus_session(self):
+        assert "session" in _rule_text("  dbus send bus=session,", 18).lower()
+
+    def test_hover_dbus_send_is_not_signal_permission(self):
+        # 'send' in a dbus rule should show dbus hover, not signal hover
+        result = _rule_text("  dbus send bus=system,", 8)
+        assert "d-bus" in result.lower() or "dbus" in result.lower()
+
+
+# ── Unix socket hover ─────────────────────────────────────────────────────────
+
+
+class TestUnixHover:
+    def test_hover_unix_keyword(self):
+        assert "unix" in _rule_text("  unix (connect) type=stream,", 4).lower()
+
+    def test_hover_unix_permission_connect(self):
+        # char 10 lands within 'connect'
+        assert "connect" in _rule_text("  unix (connect) type=stream,", 10).lower()
+
+    def test_hover_unix_permission_bind(self):
+        assert "bind" in _rule_text("  unix (bind) type=stream,", 10).lower()
+
+    def test_hover_unix_type_stream(self):
+        # char 22 lands within 'stream'
+        assert "stream" in _rule_text("  unix (connect) type=stream,", 22).lower()
+
+    def test_hover_unix_type_dgram(self):
+        assert "dgram" in _rule_text("  unix (connect) type=dgram,", 22).lower()
+
+
+# ── Mount hover ───────────────────────────────────────────────────────────────
+
+
+class TestMountHover:
+    def test_hover_mount_keyword(self):
+        assert (
+            "mount" in _rule_text("  mount options=(ro) /dev/sda1 -> /mnt/,", 4).lower()
+        )
+
+    def test_hover_mount_option_ro(self):
+        # char 18 lands within 'ro'
+        assert (
+            "ro" in _rule_text("  mount options=(ro) /dev/sda1 -> /mnt/,", 18).lower()
+        )
+
+    def test_hover_mount_option_rw(self):
+        assert (
+            "rw" in _rule_text("  mount options=(rw) /dev/sda1 -> /mnt/,", 18).lower()
+        )
+
+    def test_hover_mount_option_bind(self):
+        assert "bind" in _rule_text("  mount options=(bind) /src -> /dst,", 18).lower()
+
+    def test_hover_mount_option_noexec(self):
+        assert (
+            "noexec"
+            in _rule_text("  mount options=(noexec) /dev -> /mnt/dev,", 18).lower()
+        )
+
+
+# ── io_uring hover ────────────────────────────────────────────────────────────
+
+
+class TestIoUringHover:
+    def test_hover_io_uring_keyword(self):
+        assert "io_uring" in _rule_text("  io_uring (sqpoll),", 4).lower()
+
+    def test_hover_io_uring_sqpoll(self):
+        # char 13 lands within 'sqpoll'
+        assert "sqpoll" in _rule_text("  io_uring (sqpoll),", 13).lower()
+
+    def test_hover_io_uring_override_creds(self):
+        # char 13 lands within 'override_creds'
+        assert (
+            "override_creds" in _rule_text("  io_uring (override_creds),", 13).lower()
+        )
+
+
+# ── mqueue hover ──────────────────────────────────────────────────────────────
+
+
+class TestMqueueHover:
+    def test_hover_mqueue_keyword(self):
+        assert "mqueue" in _rule_text("  mqueue (create) type=posix,", 4).lower()
+
+    def test_hover_mqueue_permission_create(self):
+        # char 11 lands within 'create'
+        assert "create" in _rule_text("  mqueue (create) type=posix,", 11).lower()
+
+    def test_hover_mqueue_permission_read(self):
+        assert "read" in _rule_text("  mqueue (read write) type=posix,", 11).lower()
+
+    def test_hover_mqueue_type_posix(self):
+        # char 24 lands within 'posix'
+        assert "posix" in _rule_text("  mqueue (create) type=posix,", 24).lower()
+
+    def test_hover_mqueue_read_is_not_file_permission(self):
+        result = _rule_text("  mqueue (read) type=posix,", 11)
+        assert "mqueue" in result.lower()
+
+
+# ── set rlimit hover ──────────────────────────────────────────────────────────
+
+
+class TestRlimitHover:
+    def test_hover_set_keyword_shows_rlimit_doc(self):
+        # hovering on 'set' in 'set rlimit' shows the keyword doc
+        assert "rlimit" in _rule_text("  set rlimit nofile <= 1024,", 6).lower()
+
+    def test_hover_rlimit_keyword_shows_rlimit_doc(self):
+        # hovering on 'rlimit' also shows the keyword doc
+        assert "rlimit" in _rule_text("  set rlimit nofile <= 1024,", 10).lower()
+
+    def test_hover_rlimit_type_nofile(self):
+        # char 17 lands within 'nofile'
+        assert "nofile" in _rule_text("  set rlimit nofile <= 1024,", 17).lower()
+
+    def test_hover_rlimit_type_cpu(self):
+        assert "cpu" in _rule_text("  set rlimit cpu <= 60,", 16).lower()
+
+    def test_hover_rlimit_type_as(self):
+        assert "as" in _rule_text("  set rlimit as <= 1G,", 15).lower()
+
+
+# ── Network permission hover ──────────────────────────────────────────────────
+
+
+class TestNetworkPermissionHover:
+    def test_hover_network_permission_create(self):
+        # char 12 lands within 'create' in "network (create)"
+        assert "create" in _rule_text("  network (create),", 12).lower()
+
+    def test_hover_network_permission_connect(self):
+        assert "connect" in _rule_text("  network (connect) inet,", 12).lower()
