@@ -854,9 +854,7 @@ class Parser:
 
         # "set rlimit" is a two-word keyword; detect by first two tokens.
         if keyword == "set" and content.startswith("rlimit"):
-            return RlimitRuleNode(
-                range=rng, raw=raw, qualifiers=quals, content=content
-            )
+            return RlimitRuleNode(range=rng, raw=raw, qualifiers=quals, content=content)
 
         node_class = _KEYWORD_TO_NODE_CLASS.get(keyword)
         if node_class is not None:

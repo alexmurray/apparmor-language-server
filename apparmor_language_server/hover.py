@@ -159,7 +159,10 @@ def _hover_for_node(node: Node, line_text: str, ch: int) -> Optional[Hover]:
         return _hover_io_uring(line_text, ch)
     if isinstance(node, MqueueRuleNode):
         return _hover_mqueue(line_text, ch)
-    if isinstance(node, (UsernsRuleNode, PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode)):
+    if isinstance(
+        node,
+        (UsernsRuleNode, PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode),
+    ):
         return _hover_keyword_rule(line_text, ch)
     if isinstance(node, UnknownRuleNode):
         return _hover_unknown(line_text, ch)

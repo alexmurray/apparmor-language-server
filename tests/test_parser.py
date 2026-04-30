@@ -534,7 +534,9 @@ class TestGenericRules:
         src = "profile x {\n  dbus (send receive) bus=session path=/org/example,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        dbus_rules = [c for c in doc.profiles[0].children if isinstance(c, DbusRuleNode)]
+        dbus_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, DbusRuleNode)
+        ]
         assert len(dbus_rules) == 1
         assert "bus=session" in dbus_rules[0].content
 
@@ -542,7 +544,9 @@ class TestGenericRules:
         src = "profile tshark_dumpcap /usr/bin/dumpcap {\n  dbus (eavesdrop receive) bus=system,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        dbus_rules = [c for c in doc.profiles[0].children if isinstance(c, DbusRuleNode)]
+        dbus_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, DbusRuleNode)
+        ]
         assert len(dbus_rules) == 1
         assert "eavesdrop" in dbus_rules[0].content
 
@@ -550,14 +554,18 @@ class TestGenericRules:
         src = "profile x {\n  unix (connect) type=stream,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        unix_rules = [c for c in doc.profiles[0].children if isinstance(c, UnixRuleNode)]
+        unix_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, UnixRuleNode)
+        ]
         assert len(unix_rules) == 1
 
     def test_unix_peer_label(self):
         src = "profile x {\n  unix peer=(label=/usr/lib/cups/backend/cups-pdf),\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        unix_rules = [c for c in doc.profiles[0].children if isinstance(c, UnixRuleNode)]
+        unix_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, UnixRuleNode)
+        ]
         assert len(unix_rules) == 1
         assert "label=/usr/lib/cups/backend/cups-pdf" in unix_rules[0].content
 
@@ -565,21 +573,27 @@ class TestGenericRules:
         src = "profile slirp4netns /usr/bin/slirp4netns {\n  pivot_root,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        pivot_roots = [c for c in doc.profiles[0].children if isinstance(c, PivotRootRuleNode)]
+        pivot_roots = [
+            c for c in doc.profiles[0].children if isinstance(c, PivotRootRuleNode)
+        ]
         assert len(pivot_roots) == 1
 
     def test_bare_userns(self):
         src = "profile x {\n  userns,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        userns_rules = [c for c in doc.profiles[0].children if isinstance(c, UsernsRuleNode)]
+        userns_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, UsernsRuleNode)
+        ]
         assert len(userns_rules) == 1
 
     def test_io_uring_sqpoll(self):
         src = "profile x {\n  io_uring (sqpoll),\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        io_rules = [c for c in doc.profiles[0].children if isinstance(c, IoUringRuleNode)]
+        io_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, IoUringRuleNode)
+        ]
         assert len(io_rules) == 1
         assert "sqpoll" in io_rules[0].content
 
@@ -587,21 +601,27 @@ class TestGenericRules:
         src = "profile x {\n  mqueue (read write) type=posix /myqueue,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        mq_rules = [c for c in doc.profiles[0].children if isinstance(c, MqueueRuleNode)]
+        mq_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, MqueueRuleNode)
+        ]
         assert len(mq_rules) == 1
 
     def test_change_profile(self):
         src = "profile x {\n  change_profile -> /usr/bin/other,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        cp_rules = [c for c in doc.profiles[0].children if isinstance(c, ChangeProfileRuleNode)]
+        cp_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, ChangeProfileRuleNode)
+        ]
         assert len(cp_rules) == 1
 
     def test_change_hat(self):
         src = "profile x {\n  change_hat DEFAULT,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        ch_rules = [c for c in doc.profiles[0].children if isinstance(c, ChangeHatRuleNode)]
+        ch_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, ChangeHatRuleNode)
+        ]
         assert len(ch_rules) == 1
 
     def test_multiline_dbus_rule(self):

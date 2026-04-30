@@ -153,11 +153,23 @@ def _check_node(
         _check_abi(node, diags, uri)
     elif isinstance(node, IncludeNode):
         _check_include(node, diags, uri)
-    elif isinstance(node, (
-        PtraceRuleNode, DbusRuleNode, UnixRuleNode, MountRuleNode, UmountRuleNode,
-        UsernsRuleNode, IoUringRuleNode, MqueueRuleNode, RlimitRuleNode,
-        PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode,
-    )):
+    elif isinstance(
+        node,
+        (
+            PtraceRuleNode,
+            DbusRuleNode,
+            UnixRuleNode,
+            MountRuleNode,
+            UmountRuleNode,
+            UsernsRuleNode,
+            IoUringRuleNode,
+            MqueueRuleNode,
+            RlimitRuleNode,
+            PivotRootRuleNode,
+            ChangeProfileRuleNode,
+            ChangeHatRuleNode,
+        ),
+    ):
         _check_var_refs(node, diags, uri, defined_vars)
     elif isinstance(node, UnknownRuleNode):
         _check_unknown_rule(node, diags, uri, defined_vars)
