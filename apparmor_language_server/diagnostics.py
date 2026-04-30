@@ -41,16 +41,28 @@ from .constants import (
 from .parser import (
     ABINode,
     CapabilityNode,
+    ChangeHatRuleNode,
+    ChangeProfileRuleNode,
     CommentNode,
+    DbusRuleNode,
     DocumentNode,
     FileRuleNode,
-    GenericRuleNode,
     IncludeNode,
+    IoUringRuleNode,
+    MountRuleNode,
+    MqueueRuleNode,
     NetworkNode,
     Node,
     ParseError,
+    PivotRootRuleNode,
     ProfileNode,
+    PtraceRuleNode,
+    RlimitRuleNode,
     SignalRuleNode,
+    UmountRuleNode,
+    UnixRuleNode,
+    UnknownRuleNode,
+    UsernsRuleNode,
     VariableDefNode,
     resolve_include_path,
 )
@@ -141,8 +153,14 @@ def _check_node(
         _check_abi(node, diags, uri)
     elif isinstance(node, IncludeNode):
         _check_include(node, diags, uri)
-    elif isinstance(node, GenericRuleNode):
-        _check_generic(node, diags, uri, defined_vars)
+    elif isinstance(node, (
+        PtraceRuleNode, DbusRuleNode, UnixRuleNode, MountRuleNode, UmountRuleNode,
+        UsernsRuleNode, IoUringRuleNode, MqueueRuleNode, RlimitRuleNode,
+        PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode,
+    )):
+        _check_var_refs(node, diags, uri, defined_vars)
+    elif isinstance(node, UnknownRuleNode):
+        _check_unknown_rule(node, diags, uri, defined_vars)
 
 
 # ── Profile checks ────────────────────────────────────────────────────────────
@@ -400,22 +418,38 @@ def _check_include(
             )
 
 
-# ── Generic rule checks ───────────────────────────────────────────────────────
+# ── Known and unknown rule checks ────────────────────────────────────────────
 
 
-def _check_generic(
-    node: GenericRuleNode,
+def _check_var_refs(
+    node: Node,
+    diags: dict[str, list[Diagnostic]],
+    uri: str,
+    defined_vars: set[str],
+) -> None:
+    for var_ref in _VAR_REF.findall(node.raw):
+        if var_ref not in defined_vars:
+            diags.setdefault(uri, []).append(
+                _diag(
+                    node,
+                    f"Variable '{var_ref}' is used but never defined.",
+                    DiagnosticSeverity.Warning,
+                    "undefined-variable",
+                )
+            )
+
+
+def _check_unknown_rule(
+    node: UnknownRuleNode,
     diags: dict[str, list[Diagnostic]],
     uri: str,
     defined_vars: set[str],
 ) -> None:
     kw = node.keyword.lower()
-    # Skip empty / handled above
     if not kw:
         return
 
     if kw not in KEYWORD_DEFS:
-        # Could be a file path starting with a letter (unusual but valid)
         if not kw.startswith("/") and not kw.startswith("@"):
             diags.setdefault(uri, []).append(
                 _diag(
@@ -426,15 +460,4 @@ def _check_generic(
                 )
             )
 
-    # Variable refs in generic rules
-    full = node.raw
-    for var_ref in _VAR_REF.findall(full):
-        if var_ref not in defined_vars:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Variable '{var_ref}' is used but never defined.",
-                    DiagnosticSeverity.Warning,
-                    "undefined-variable",
-                )
-            )
+    _check_var_refs(node, diags, uri, defined_vars)

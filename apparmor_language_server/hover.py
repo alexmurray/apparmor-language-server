@@ -48,15 +48,27 @@ from .constants import (
 from .parser import (
     ABINode,
     CapabilityNode,
+    ChangeHatRuleNode,
+    ChangeProfileRuleNode,
     CommentNode,
+    DbusRuleNode,
     DocumentNode,
     FileRuleNode,
-    GenericRuleNode,
     IncludeNode,
+    IoUringRuleNode,
+    MountRuleNode,
+    MqueueRuleNode,
     NetworkNode,
     Node,
+    PivotRootRuleNode,
     ProfileNode,
+    PtraceRuleNode,
+    RlimitRuleNode,
     SignalRuleNode,
+    UmountRuleNode,
+    UnixRuleNode,
+    UnknownRuleNode,
+    UsernsRuleNode,
 )
 
 _RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -133,8 +145,24 @@ def _hover_for_node(node: Node, line_text: str, ch: int) -> Optional[Hover]:
         return _hover_include(node, line_text, ch)
     if isinstance(node, ABINode):
         return _hover_abi(line_text, ch)
-    if isinstance(node, GenericRuleNode):
-        return _hover_generic(node, line_text, ch)
+    if isinstance(node, PtraceRuleNode):
+        return _hover_ptrace(line_text, ch)
+    if isinstance(node, DbusRuleNode):
+        return _hover_dbus(line_text, ch)
+    if isinstance(node, UnixRuleNode):
+        return _hover_unix(line_text, ch)
+    if isinstance(node, (MountRuleNode, UmountRuleNode)):
+        return _hover_mount(line_text, ch)
+    if isinstance(node, RlimitRuleNode):
+        return _hover_rlimit(line_text, ch)
+    if isinstance(node, IoUringRuleNode):
+        return _hover_io_uring(line_text, ch)
+    if isinstance(node, MqueueRuleNode):
+        return _hover_mqueue(line_text, ch)
+    if isinstance(node, (UsernsRuleNode, PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode)):
+        return _hover_keyword_rule(line_text, ch)
+    if isinstance(node, UnknownRuleNode):
+        return _hover_unknown(line_text, ch)
     # VariableDefNode: the @{name} token is already handled by _RE_VAR above.
     return None
 
@@ -262,32 +290,101 @@ def _hover_abi(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_generic(node: GenericRuleNode, line_text: str, ch: int) -> Optional[Hover]:
+def _hover_ptrace(line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
     if word in QUALIFIER_DEFS:
         return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word == "ptrace":
+        return _make_hover(KEYWORD_DEFS["ptrace"].doc, ws, we)
+    return _hover_ptrace_token(word, ws, we)
 
-    kw = node.keyword
-    h: Optional[Hover] = None
-    if kw == "ptrace":
-        h = _hover_ptrace_token(word, ws, we)
-    elif kw == "dbus":
-        h = _hover_dbus_token(word, ws, we)
-    elif kw == "unix":
-        h = _hover_unix_token(word, ws, we)
-    elif kw == "mount":
-        h = _hover_mount_token(word, ws, we)
-    elif kw == "set":
-        h = _hover_rlimit_token(word, ws, we)
-    elif kw == "io_uring":
-        h = _hover_io_uring_token(word, ws, we)
-    elif kw == "mqueue":
-        h = _hover_mqueue_token(word, ws, we)
-    if h is not None:
-        return h
 
+def _hover_dbus(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word == "dbus":
+        return _make_hover(KEYWORD_DEFS["dbus"].doc, ws, we)
+    return _hover_dbus_token(word, ws, we)
+
+
+def _hover_unix(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word == "unix":
+        return _make_hover(KEYWORD_DEFS["unix"].doc, ws, we)
+    return _hover_unix_token(word, ws, we)
+
+
+def _hover_mount(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word in ("mount", "umount", "remount"):
+        kw_def = KEYWORD_DEFS.get(word)
+        if kw_def:
+            return _make_hover(kw_def.doc, ws, we)
+    return _hover_mount_token(word, ws, we)
+
+
+def _hover_rlimit(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    return _hover_rlimit_token(word, ws, we)
+
+
+def _hover_io_uring(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word == "io_uring":
+        return _make_hover(KEYWORD_DEFS["io_uring"].doc, ws, we)
+    return _hover_io_uring_token(word, ws, we)
+
+
+def _hover_mqueue(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word == "mqueue":
+        return _make_hover(KEYWORD_DEFS["mqueue"].doc, ws, we)
+    return _hover_mqueue_token(word, ws, we)
+
+
+def _hover_keyword_rule(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    kw_def = KEYWORD_DEFS.get(word)
+    if kw_def:
+        return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+def _hover_unknown(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
     kw_def = KEYWORD_DEFS.get(word)
     if kw_def:
         return _make_hover(kw_def.doc, ws, we)

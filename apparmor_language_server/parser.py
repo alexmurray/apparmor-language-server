@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from lsprotocol.types import Position, Range
 
@@ -245,9 +245,84 @@ class SignalRuleNode(RuleNode):
 
 
 @dataclass
-class GenericRuleNode(RuleNode):
+class PtraceRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class DbusRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class UnixRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class MountRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class UmountRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class UsernsRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class IoUringRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class MqueueRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class RlimitRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class PivotRootRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class ChangeProfileRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class ChangeHatRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
+class UnknownRuleNode(RuleNode):
     keyword: str = ""
     content: str = ""
+
+
+_KEYWORD_TO_NODE_CLASS: dict[str, Any] = {
+    "ptrace": PtraceRuleNode,
+    "dbus": DbusRuleNode,
+    "unix": UnixRuleNode,
+    "mount": MountRuleNode,
+    "umount": UmountRuleNode,
+    "userns": UsernsRuleNode,
+    "io_uring": IoUringRuleNode,
+    "mqueue": MqueueRuleNode,
+    "pivot_root": PivotRootRuleNode,
+    "change_profile": ChangeProfileRuleNode,
+    "change_hat": ChangeHatRuleNode,
+}
 
 
 @dataclass
@@ -690,7 +765,7 @@ class Parser:
                 break
 
         if not raw_lines:
-            return GenericRuleNode(
+            return UnknownRuleNode(
                 range=self._make_range(start_line, start_line),
                 raw="",
                 keyword="",
@@ -762,15 +837,33 @@ class Parser:
                 link_target=mf.group("link_target"),
             )
 
-        # -- Generic --
-        tokens = joined.split()
+        # -- Specific keyword rules --
+        # Strip leading qualifiers to find the actual rule keyword.
+        quals = self._leading_qualifiers(joined)
+        kw_start = joined
+        for q in quals:
+            kw_start = kw_start.lstrip().removeprefix(q).lstrip()
+        # Remove trailing rule-terminating comma (at paren depth 0) so that
+        # single-token rules like "pivot_root," don't get the comma included
+        # in the keyword.
+        kw_start = kw_start.rstrip(", ")
+        tokens = kw_start.split()
         keyword = tokens[0] if tokens else ""
-        content = joined[len(keyword) :].strip() if tokens else ""
-        return GenericRuleNode(
-            range=self._make_range(start_line, end_line),
-            raw=raw,
-            keyword=keyword,
-            content=content,
+        content = kw_start[len(keyword) :].strip() if tokens else ""
+        rng = self._make_range(start_line, end_line)
+
+        # "set rlimit" is a two-word keyword; detect by first two tokens.
+        if keyword == "set" and content.startswith("rlimit"):
+            return RlimitRuleNode(
+                range=rng, raw=raw, qualifiers=quals, content=content
+            )
+
+        node_class = _KEYWORD_TO_NODE_CLASS.get(keyword)
+        if node_class is not None:
+            return node_class(range=rng, raw=raw, qualifiers=quals, content=content)
+
+        return UnknownRuleNode(
+            range=rng, raw=raw, qualifiers=quals, keyword=keyword, content=content
         )
 
     @staticmethod
