@@ -18,7 +18,7 @@ from typing import Optional
 
 from lsprotocol.types import Position, Range
 
-from .constants import KEYWORD_DEFS, QUALIFIERS, RE_FILE_PERMISSIONS
+from .constants import KEYWORD_DEFS, QUALIFIERS, RE_FILE_PERMISSIONS, SIGNAL_PERMISSIONS
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -52,6 +52,15 @@ RE_CAPABILITY = re.compile(
 RE_NETWORK = re.compile(
     _RE_QUALIFIERS.pattern + r"?network\b\s*(?P<rest>[^{}\n,]*?)\s*,?\s*$"
 )
+RE_SIGNAL = re.compile(
+    _RE_QUALIFIERS.pattern + r"signal\b\s*(?P<rest>[^{}\n]*?)\s*,?\s*$"
+)
+
+_RE_SIGNAL_PAREN_PERMS = re.compile(r"^\s*\(([^)]*)\)")
+_SIGNAL_PERM_ALT: str = "|".join(sorted(SIGNAL_PERMISSIONS, key=lambda s: -len(s)))
+_RE_SIGNAL_BARE_PERM = re.compile(r"^\s*(" + _SIGNAL_PERM_ALT + r")(?=\s|$)")
+_RE_SIGNAL_SET = re.compile(r"\bset=(?:\(([^)]*)\)|\"([^\"]*)\"|(\S+))")
+_RE_SIGNAL_PEER = re.compile(r"\bpeer=(\S+)")
 _RE_FILE_QUALIFIERS = re.compile(
     r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS + ["owner"]) + r")\s+)*)?"
 )
@@ -114,6 +123,36 @@ def _rule_ends_line(line: str) -> bool:
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_signal_rest(
+    rest: str,
+) -> tuple[list[str], list[str], Optional[str]]:
+    """Extract (permissions, signal_set, peer) from the body of a signal rule."""
+    permissions: list[str] = []
+    signal_set: list[str] = []
+    peer: Optional[str] = None
+
+    m = _RE_SIGNAL_PAREN_PERMS.match(rest)
+    if m:
+        permissions = m.group(1).split()
+        rest = rest[m.end() :]
+    else:
+        m = _RE_SIGNAL_BARE_PERM.match(rest)
+        if m:
+            permissions = [m.group(1)]
+            rest = rest[m.end() :]
+
+    sm = _RE_SIGNAL_SET.search(rest)
+    if sm:
+        raw_set = sm.group(1) or sm.group(2) or sm.group(3) or ""
+        signal_set = [s.strip('"') for s in raw_set.split() if s.strip('"')]
+
+    pm = _RE_SIGNAL_PEER.search(rest)
+    if pm:
+        peer = pm.group(1).rstrip(",")
+
+    return permissions, signal_set, peer
 
 
 def _line_opens_profile(line: str) -> bool:
@@ -196,6 +235,13 @@ class CapabilityNode(RuleNode):
 @dataclass
 class NetworkNode(RuleNode):
     rest: str = ""
+
+
+@dataclass
+class SignalRuleNode(RuleNode):
+    permissions: list[str] = field(default_factory=list)
+    signal_set: list[str] = field(default_factory=list)
+    peer: Optional[str] = None
 
 
 @dataclass
@@ -655,7 +701,7 @@ class Parser:
         raw = "\n".join(raw_lines)
         # Normalise for regex matching: strip each line and join with a space
         # so that multi-line rules look like a single logical line.
-        joined = " ".join(l.strip() for l in raw_lines)
+        joined = " ".join(line.strip() for line in raw_lines)
 
         # -- Capability --
         mc = RE_CAPABILITY.match(joined)
@@ -680,6 +726,19 @@ class Parser:
                 raw=raw,
                 qualifiers=self._leading_qualifiers(joined),
                 rest=mn.group("rest").strip(),
+            )
+
+        # -- Signal --
+        ms = RE_SIGNAL.match(joined)
+        if ms:
+            perms, sig_set, peer = _parse_signal_rest(ms.group("rest"))
+            return SignalRuleNode(
+                range=self._make_range(start_line, end_line),
+                raw=raw,
+                qualifiers=self._leading_qualifiers(joined),
+                permissions=perms,
+                signal_set=sig_set,
+                peer=peer,
             )
 
         # -- File rule - permissions as prefix or suffix variants --

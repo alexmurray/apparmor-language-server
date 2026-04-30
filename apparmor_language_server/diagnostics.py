@@ -35,6 +35,8 @@ from .constants import (
     NETWORK_DOMAINS,
     NETWORK_TYPES,
     PROFILE_FLAGS,
+    SIGNAL_NAMES,
+    SIGNAL_PERMISSIONS,
 )
 from .parser import (
     ABINode,
@@ -48,6 +50,7 @@ from .parser import (
     Node,
     ParseError,
     ProfileNode,
+    SignalRuleNode,
     VariableDefNode,
     resolve_include_path,
 )
@@ -130,6 +133,8 @@ def _check_node(
         _check_capability(node, diags, uri)
     elif isinstance(node, NetworkNode):
         _check_network(node, diags, uri)
+    elif isinstance(node, SignalRuleNode):
+        _check_signal(node, diags, uri)
     elif isinstance(node, FileRuleNode):
         _check_file_rule(node, diags, uri, defined_vars)
     elif isinstance(node, ABINode):
@@ -255,6 +260,34 @@ def _check_network(
                     "(e.g. inet, inet6) or type (e.g. stream, dgram).",
                     DiagnosticSeverity.Warning,
                     "unknown-network-qualifier",
+                )
+            )
+
+
+# ── Signal checks ─────────────────────────────────────────────────────────────
+
+
+def _check_signal(
+    node: SignalRuleNode, diags: dict[str, list[Diagnostic]], uri: str
+) -> None:
+    for perm in node.permissions:
+        if perm.lower() not in SIGNAL_PERMISSIONS:
+            diags.setdefault(uri, []).append(
+                _diag(
+                    node,
+                    f"Unknown signal permission '{perm}'. Expected one of: {', '.join(SIGNAL_PERMISSIONS)}.",
+                    DiagnosticSeverity.Warning,
+                    "unknown-signal-permission",
+                )
+            )
+    for name in node.signal_set:
+        if name.lower() not in SIGNAL_NAMES:
+            diags.setdefault(uri, []).append(
+                _diag(
+                    node,
+                    f"Unknown signal name '{name}'. Expected a signal name such as term, kill, hup.",
+                    DiagnosticSeverity.Warning,
+                    "unknown-signal-name",
                 )
             )
 
