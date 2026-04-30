@@ -29,7 +29,7 @@ profile myapp /usr/bin/myapp {
 
 def _all_diags(src: str):
     doc, errors = parse_document("file:///test.aa", src)
-    diags = get_diagnostics(doc, errors, src)
+    diags = get_diagnostics(doc, errors)
     return [d for sublist in diags.values() for d in sublist]
 
 
@@ -43,7 +43,7 @@ def _codes(src: str) -> list[int | str | None]:
 class TestValidProfiles:
     def test_no_diags_on_valid_profile(self):
         doc, errors = parse_document("file:///test.aa", SIMPLE_PROFILE)
-        diags = get_diagnostics(doc, errors, SIMPLE_PROFILE)
+        diags = get_diagnostics(doc, errors)
         all_diags = [d for sublist in diags.values() for d in sublist]
         error_diags = [d for d in all_diags if d.severity and d.severity.value <= 1]
         assert len(error_diags) == 0
@@ -51,13 +51,13 @@ class TestValidProfiles:
     def test_no_warning_with_known_network_qualifiers(self):
         src = "profile x {\n  audit network inet stream,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
-        diags = get_diagnostics(doc, errors, src)
+        diags = get_diagnostics(doc, errors)
         assert len(diags) == 0, f"Expected no diagnostics, got: {diags}"
 
     def test_no_warning_with_known_file_qualifiers(self):
         src = "profile x {\n  audit file r /foo,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
-        diags = get_diagnostics(doc, errors, src)
+        diags = get_diagnostics(doc, errors)
         assert len(diags) == 0, f"Expected no diagnostics, got: {diags}"
 
 
@@ -90,6 +90,10 @@ class TestCapabilityDiagnostics:
         codes = _codes(src)
         assert "unknown-keyword" not in codes
 
+    def test_conflicting_capability_warning(self):
+        src = "profile x {\n  capability kill,\n  deny capability kill,\n}\n"
+        assert "conflicting-capability" in _codes(src)
+
 
 # ── Network checks ────────────────────────────────────────────────────────────
 
@@ -114,6 +118,10 @@ class TestFileRuleDiagnostics:
         src = "profile x {\n  /usr/bin/sudo ux,\n}\n"
         assert "dangerous-exec" in _codes(src)
 
+    def test_prefer_append_suggestion(self):
+        src = "profile x {\n  /var/log/myapp.log w,\n}\n"
+        assert "prefer-append" in _codes(src)
+
 
 # ── Profile checks ────────────────────────────────────────────────────────────
 
@@ -122,6 +130,10 @@ class TestProfileDiagnostics:
     def test_empty_profile_warning(self):
         src = "profile empty { }\n"
         assert "empty-profile" in _codes(src)
+
+    def test_unknown_flag(self):
+        src = "profile x flags=(notaflag) {\n  capability kill,\n}\n"
+        assert "unknown-flag" in _codes(src)
 
 
 # ── Signal rule diagnostics ───────────────────────────────────────────────────
@@ -137,6 +149,28 @@ class TestSignalDiagnostics:
         src = "profile x {\n  allow signal,\n}\n"
         codes = _codes(src)
         assert "unknown-keyword" not in codes
+
+    def test_unknown_signal_permission(self):
+        src = "profile x {\n  signal (notaperm),\n}\n"
+        assert "unknown-signal-permission" in _codes(src)
+
+    def test_unknown_signal_name(self):
+        src = "profile x {\n  signal set=(notasignal),\n}\n"
+        assert "unknown-signal-name" in _codes(src)
+
+
+# ── Variable checks ───────────────────────────────────────────────────────────
+
+
+class TestVariableDiagnostics:
+    def test_undefined_variable_in_file_rule(self):
+        src = "profile x {\n  deny file @{UNDEFINED}/** r,\n}\n"
+        assert "undefined-variable" in _codes(src)
+
+    def test_defined_variable_no_diagnostic(self):
+        src = "@{MYVAR} = /usr/bin\nprofile x {\n  deny file @{MYVAR}/** r,\n}\n"
+        codes = _codes(src)
+        assert "undefined-variable" not in codes
 
 
 # ── Include checks ────────────────────────────────────────────────────────────

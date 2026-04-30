@@ -6,32 +6,12 @@ Run with: pytest tests/test_completions.py -v
 from __future__ import annotations
 
 import pytest
-from lsprotocol.types import Position, Range
+from lsprotocol.types import Position
 
 from apparmor_language_server.completions import get_completions
-from apparmor_language_server.parser import DocumentNode, VariableDefNode
+from apparmor_language_server.parser import VariableDefNode
 
-
-def make_var(name: str, values: list[str]) -> VariableDefNode:
-    return VariableDefNode(
-        name=name,
-        values=values,
-        range=Range(
-            start=Position(line=0, character=0),
-            end=Position(line=0, character=0),
-        ),
-        raw=f"{name} = {' '.join(values)}",
-    )
-
-
-def make_doc(variables: dict[str, VariableDefNode] | None = None) -> DocumentNode:
-    if variables is None:
-        variables = {}
-    return DocumentNode(
-        uri="file:///test.aa",
-        variables=variables,
-        all_variables={"file:///test.aa": variables},
-    )
+from conftest import make_doc, make_var
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -215,3 +195,47 @@ class TestFilePathCompletions:
         result = _complete(line, len(line))
         labels = {item.label for item in result.items}
         assert any("apparmor.d" in label for label in labels)
+
+
+# ── Mount completions ─────────────────────────────────────────────────────────
+
+
+class TestMountCompletions:
+    def test_mount_option_completions(self):
+        result = _complete("  mount ")
+        labels = {item.label for item in result.items}
+        assert "ro" in labels
+        assert "rw" in labels
+
+    def test_umount_option_completions(self):
+        result = _complete("  umount ")
+        labels = {item.label for item in result.items}
+        assert "ro" in labels
+
+
+# ── DBus completions ──────────────────────────────────────────────────────────
+
+
+class TestDBusCompletions:
+    def test_dbus_permission_completions(self):
+        result = _complete("  dbus ")
+        labels = {item.label for item in result.items}
+        assert "send" in labels
+        assert "receive" in labels
+
+    def test_dbus_no_completions_after_bus_keyword(self):
+        result = _complete("  dbus bus ")
+        labels = {item.label for item in result.items}
+        assert "system" in labels
+        assert "session" in labels
+
+
+# ── Unix socket completions ───────────────────────────────────────────────────
+
+
+class TestUnixCompletions:
+    def test_unix_permission_completions(self):
+        result = _complete("  unix ")
+        labels = {item.label for item in result.items}
+        assert "create" in labels
+        assert "connect" in labels

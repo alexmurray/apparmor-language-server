@@ -134,7 +134,7 @@ class AppArmorLanguageServer(LanguageServer):
 
     def _publish_diagnostics(self, uri: str, text: str) -> None:
         doc, errors = self.parse_and_cache(uri, text)
-        diags = get_diagnostics(doc, errors, text)
+        diags = get_diagnostics(doc, errors)
         for uri, d in diags.items():
             self.text_document_publish_diagnostics(
                 PublishDiagnosticsParams(uri=uri, diagnostics=d)
@@ -346,7 +346,7 @@ def references(
     if cached is None:
         cached = ls.parse_and_cache(uri, text)
 
-    doc, _ = cached
+    _, _ = cached
 
     word = _word_at_position(line_text, position.character)
     if not word:

@@ -57,6 +57,11 @@ class TestFormatting:
         out = _format(src, max_blank_lines=1)
         assert "\n\n\n" not in out
 
+    def test_paren_list_sorted(self):
+        src = "profile x flags=(mediate_deleted,complain) {\n  capability kill,\n}\n"
+        out = _format(src)
+        assert "(complain, mediate_deleted)" in out
+
     def test_no_edit_on_clean_file(self):
         src = "profile x {\n  capability kill,\n}\n"
         first = _format(src)

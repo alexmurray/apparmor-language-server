@@ -7,22 +7,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from lsprotocol.types import MarkupContent, Position, Range
+from lsprotocol.types import MarkupContent, Position
 
 from apparmor_language_server.hover import Hover, get_hover
 from apparmor_language_server.parser import VariableDefNode, parse_document
 
-
-def make_var(name: str, values: list[str]) -> VariableDefNode:
-    return VariableDefNode(
-        name=name,
-        values=values,
-        range=Range(
-            start=Position(line=0, character=0),
-            end=Position(line=0, character=0),
-        ),
-        raw=f"{name} = {' '.join(values)}",
-    )
+from conftest import make_var
 
 
 # ── Test helpers ──────────────────────────────────────────────────────────────

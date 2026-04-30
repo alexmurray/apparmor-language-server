@@ -216,7 +216,6 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `unknown-capability` | Error | Capability not in `man 7 capabilities` list |
 | `unknown-flag` | Error | Unrecognised profile flag in `flags=(…)` |
 | `unknown-network-qualifier` | Warning | Unknown network family or socket type |
-| `unknown-permission` | Error | Invalid character in file permission string |
 | `unknown-keyword` | Warning | Unrecognised rule keyword |
 | `dangerous-exec` | Warning | `ux`/`Ux`/`pux`/`cux` allows unconfined exec |
 | `prefer-append` | Information | `w` on a log file; consider `a` instead |
@@ -225,6 +224,9 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `conflicting-capability` | Warning | Same capability both allowed and denied |
 | `undefined-variable` | Warning | `@{VAR}` used but never defined |
 | `missing-include` | Warning | Include target not found on disk |
+| `missing-abi` | Warning | ABI target not found on disk |
+| `unknown-signal-permission` | Warning | Invalid permission in `signal` rule |
+| `unknown-signal-name` | Warning | Unknown signal name in `signal set=(…)` |
 
 ---
 
@@ -259,11 +261,18 @@ extend the `get_completions()` dispatcher with a new regex trigger.
 ## Development
 
 ```bash
-# Install dev dependencies
-pip install pygls lsprotocol pytest
+# Install dev dependencies (includes pytest, ruff, ty, etc.)
+pip install -e ".[dev]"
 
 # Run tests
-PYTHONPATH=. pytest tests/ -v
+pytest tests/ -v
+
+# Lint and format
+ruff check apparmor_language_server/
+ruff format apparmor_language_server/
+
+# Type-check
+ty check apparmor_language_server/
 
 # Run the server in TCP mode for interactive debugging
 python -m apparmor_language_server --tcp --port 2087

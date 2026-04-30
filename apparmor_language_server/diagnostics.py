@@ -5,16 +5,15 @@ Checks performed
 ────────────────
  • Unknown capabilities
  • Unknown network families / types
- • Conflicting / redundant file permission modifiers
+ • Unknown signal permissions / names
+ • Dangerous exec permissions (ux/Ux) with a warning
  • Unclosed profiles detected by parser
  • Duplicate capability declarations
- • Dangerous exec permissions (ux/Ux) with a warning
+ • Conflicting allow + deny for the same capability
  • Empty profile bodies
- • Variable used but never defined
- • Profile name does not start with '/' or 'profile'
- • Include path that does not exist on disk
- • Deny + allow of the same resource in the same profile
  • Invalid profile flags
+ • Variable used but never defined
+ • Include / ABI path that does not exist on disk
 """
 
 from __future__ import annotations
@@ -69,8 +68,6 @@ from .parser import (
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-_VALID_FILE_PERMS = set("rwaxmlkdDuUipPcCbBiI")
-
 # Dangerous unconfined exec permissions
 _DANGEROUS_PERMS = {"ux", "Ux", "pux", "cux"}
 
@@ -103,7 +100,6 @@ def _diag(
 def get_diagnostics(
     doc: DocumentNode,
     parse_errors: list[ParseError],
-    text: str,
 ) -> dict[str, list[Diagnostic]]:
     diags: dict[str, list[Diagnostic]] = {}
 
@@ -333,21 +329,7 @@ def _check_file_rule(
     uri: str,
     defined_vars: set[str],
 ) -> None:
-    # Check for invalid permission characters
-    # Strip exec modifier compounds first
     perm_str = node.perms
-    # Valid single-char perms
-    for ch in perm_str:
-        if ch not in _VALID_FILE_PERMS:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown file permission character '{ch}' in '{perm_str}'.",
-                    DiagnosticSeverity.Error,
-                    "unknown-permission",
-                )
-            )
-            break
 
     # Warn about dangerous unconfined exec
     for dp in _DANGEROUS_PERMS:
