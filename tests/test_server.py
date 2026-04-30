@@ -12,10 +12,13 @@ from apparmor_language_server.formatting import FormatterOptions, format_documen
 from apparmor_language_server.hover import get_hover
 from apparmor_language_server.parser import (
     CapabilityNode,
+    DocumentNode,
     FileRuleNode,
+    Range,
+    VariableDefNode,
     parse_document,
 )
-from lsprotocol.types import Position
+from lsprotocol.types import Position, Range
 
 # ── Sample profiles ───────────────────────────────────────────────────────────
 
@@ -26,6 +29,10 @@ profile myapp /usr/bin/myapp {
 
   /etc/myapp.conf r,
   /var/log/myapp.log rw,
+  file /usr/bin/myapp ix,
+  file r /usr/lib/libmyapp.so*,
+  owner file rw @{HOME}/.myapp/**,
+  deny file r /dev/dri/{,**},
   capability net_bind_service,
   network inet stream,
 }
@@ -51,6 +58,22 @@ profile broken {
   capability bad_capability_xyz,
   network notafamily,
   /etc/hosts rwXXXXX,
+"""
+
+MULTILINE_RULES_PROFILE = """\
+profile multiline /usr/bin/multiline {
+  network
+      inet stream,
+  dbus (send)
+      bus=session
+      path=/org/freedesktop/DBus
+      interface=org.freedesktop.DBus
+      member="{Request,Release}Name"
+      peer=(name=org.freedesktop.DBus, label=unconfined),
+  capability
+      sys_admin
+      chown,
+}
 """
 
 PROFILE_USING_HOME = """\
@@ -89,6 +112,19 @@ class TestParser:
         assert len(files) >= 1
         paths = {f.path for f in files}
         assert "/etc/myapp.conf" in paths
+        assert "/usr/bin/myapp" in paths
+        assert "/usr/lib/libmyapp.so*" in paths
+        assert "@{HOME}/.myapp/**" in paths
+
+        # check qualifiers and permissions on the @{HOME} rule
+        home_rule = next(f for f in files if f.path == "@{HOME}/.myapp/**")
+        assert "owner" in home_rule.qualifiers
+        assert "rw" in home_rule.perms
+
+        # check qualifiers and permissions on the deny rule
+        deny_rule = next(f for f in files if f.path == "/dev/dri/{,**}")
+        assert "deny" in deny_rule.qualifiers
+        assert "r" in deny_rule.perms
 
     def test_variable_definition(self):
         doc, _ = parse_document("file:///test.aa", MULTI_PROFILE)
@@ -96,7 +132,19 @@ class TestParser:
 
     def test_profile_using_home_variable(self):
         doc, errors = parse_document("file:///test.aa", PROFILE_USING_HOME)
-        assert "@{HOME}" in doc.variables
+        assert any(inc.path == "tunables/home" for inc in doc.includes)
+        # The @{HOME} variable should be defined from the included tunables/home file
+        found_home_var = False
+        for inc in doc.includes:
+            if inc.path == "tunables/home":
+                for doc in inc.documents:
+                    for name, _ in doc.variables.items():
+                        if name == "@{HOME}":
+                            found_home_var = True
+                            break
+        assert found_home_var, (
+            "Expected @{HOME} variable to be defined from tunables/home"
+        )
         assert len(errors) == 0
 
     def test_multiple_profiles(self):
@@ -120,6 +168,47 @@ class TestParser:
         nets = [c for c in profile.children if isinstance(c, NetworkNode)]
         assert len(nets) == 1
         assert "inet" in nets[0].rest
+
+    def test_multiline_network_rule(self):
+        doc, errors = parse_document("file:///test.aa", MULTILINE_RULES_PROFILE)
+        assert len(errors) == 0
+        from apparmor_language_server.parser import NetworkNode
+
+        profile = doc.profiles[0]
+        nets = [c for c in profile.children if isinstance(c, NetworkNode)]
+        assert len(nets) == 1
+        assert "inet" in nets[0].rest
+        assert "stream" in nets[0].rest
+
+    def test_multiline_capability_rule(self):
+        doc, errors = parse_document("file:///test.aa", MULTILINE_RULES_PROFILE)
+        assert len(errors) == 0
+        profile = doc.profiles[0]
+        caps = [c for c in profile.children if isinstance(c, CapabilityNode)]
+        assert len(caps) == 1
+        assert "sys_admin" in caps[0].capabilities
+        assert "chown" in caps[0].capabilities
+
+    def test_multiline_dbus_rule(self):
+        from apparmor_language_server.parser import GenericRuleNode
+
+        doc, errors = parse_document("file:///test.aa", MULTILINE_RULES_PROFILE)
+        assert len(errors) == 0
+        profile = doc.profiles[0]
+        generics = [c for c in profile.children if isinstance(c, GenericRuleNode)]
+        dbus_rules = [g for g in generics if g.keyword == "dbus"]
+        assert len(dbus_rules) == 1
+        assert "bus=session" in dbus_rules[0].content
+        assert "peer=(name=org.freedesktop.DBus, label=unconfined)" in dbus_rules[0].content
+
+    def test_multiline_rule_range(self):
+        doc, _ = parse_document("file:///test.aa", MULTILINE_RULES_PROFILE)
+        from apparmor_language_server.parser import NetworkNode
+
+        profile = doc.profiles[0]
+        net = next(c for c in profile.children if isinstance(c, NetworkNode))
+        # network rule spans lines 1-2 (0-indexed) within the profile body
+        assert net.range.start.line < net.range.end.line
 
 
 # ── Diagnostics tests ─────────────────────────────────────────────────────────
@@ -166,45 +255,88 @@ class TestDiagnostics:
         codes = [d.code for d in all_diags]
         assert "dangerous-exec" in codes
 
+    def test_unknown_network_family(self):
+        src = "profile x {\n  network notafamily,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        diags = get_diagnostics(doc, errors, src)
+        all_diags = [d for sublist in diags.values() for d in sublist]
+        codes = [d.code for d in all_diags]
+        assert "unknown-network-qualifier" in codes
+
+    def test_no_warning_with_known_network_qualifiers(self):
+        src = "profile x {\n  audit network inet stream,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        diags = get_diagnostics(doc, errors, src)
+        assert len(diags) == 0, f"Expected no diagnostics, got: {diags}"
+
+    def test_no_warning_with_known_file_qualifiers(self):
+        src = "profile x {\n  audit file r /foo,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        diags = get_diagnostics(doc, errors, src)
+        assert len(diags) == 0, f"Expected no diagnostics, got: {diags}"
+
 
 # ── Completions tests ─────────────────────────────────────────────────────────
 
 
 class TestCompletions:
-    def _complete(self, line: str, char: int):
+    def _complete(
+        self,
+        line: str,
+        char: int | None = None,
+        variables: dict[str, VariableDefNode] = {},
+    ):
+        if char is None:
+            char = len(line)
         pos = Position(line=0, character=char)
-        return get_completions(line, pos, "file:///test.aa", [line])
+        doc = DocumentNode(
+            uri="file:///test.aa",
+            variables=variables,
+            all_variables={"file:///test.aa": variables},
+        )
+        return get_completions(doc, line, pos, "file:///test.aa")
 
     def test_keyword_completions_at_start(self):
-        result = self._complete("  cap", 5)
+        result = self._complete("  cap")
         labels = {item.label for item in result.items}
         assert "capability" in labels
 
     def test_capability_completions(self):
-        result = self._complete("  capability net", 17)
+        result = self._complete("  capability net")
         labels = {item.label for item in result.items}
         assert "net_admin" in labels
         assert "net_bind_service" in labels
 
     def test_network_family_completions(self):
-        result = self._complete("  network ", 10)
+        result = self._complete("  network ")
         labels = {item.label for item in result.items}
         assert "inet" in labels
         assert "inet6" in labels
 
     def test_network_type_completions(self):
-        result = self._complete("  network inet ", 15)
+        result = self._complete("  network inet ")
         labels = {item.label for item in result.items}
         assert "stream" in labels
         assert "dgram" in labels
 
     def test_variable_completions(self):
-        result = self._complete("  @{HO", 6)
+        variables = {
+            "@{HOME}": VariableDefNode(
+                name="@{HOME}",
+                values=["/home/*/", "/root/"],
+                range=Range(
+                    start=Position(line=0, character=0),
+                    end=Position(line=0, character=0),
+                ),
+                raw="@{HOME} = /home/*/ /root/",
+            )
+        }
+        result = self._complete("  @{HO", None, variables=variables)
         labels = {item.label for item in result.items}
         assert "@{HOME}" in labels
 
     def test_abi_completions(self):
-        result = self._complete("  abi <abi/", 11)
+        result = self._complete("  abi <abi/")
         labels = {item.label for item in result.items}
         # at least one ABI should be offered
         assert len(labels) >= 1
@@ -212,16 +344,32 @@ class TestCompletions:
         assert all("abi/" in label for label in labels)
 
     def test_include_completions(self):
-        result = self._complete("  include <abstractions/", 23)
+        result = self._complete("  include <abstractions/")
         labels = {item.label for item in result.items}
         # Should have at least some abstractions
         assert any("abstractions/" in label for label in labels)
 
-    def test_file_perm_completions(self):
-        result = self._complete("  /etc/passwd ", 14)
+    @pytest.mark.parametrize("line", ["  /etc/passwd ", "  file /etc/passwd r"])
+    def test_file_perm_completions(self, line: str):
+        result = self._complete(line)
         labels = {item.label for item in result.items}
         # Should offer permission strings
-        assert "r" in labels or "rw" in labels
+        assert "rw" in labels
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "  /etc/apparmo",
+            "  file /etc/apparmo",
+            "audit /etc/apparmo",
+            "audit deny file /etc/apparmo",
+        ],
+    )
+    def test_file_path_completions(self, line: str):
+        result = self._complete(line, len(line))
+        labels = {item.label for item in result.items}
+        # Should offer /etc/apparmor.d as a completion
+        assert any("apparmor.d" in label for label in labels)
 
 
 # ── Formatting tests ──────────────────────────────────────────────────────────
@@ -284,9 +432,14 @@ class TestFormatting:
 
 
 class TestHover:
-    def _hover(self, line: str, char: int):
+    def _hover(self, line: str, char: int, variables: dict[str, VariableDefNode] = {}):
         pos = Position(line=0, character=char)
-        return get_hover(line, pos)
+        doc = DocumentNode(
+            uri="file:///test.aa",
+            variables=variables,
+            all_variables={"file:///test.aa": variables},
+        )
+        return get_hover(doc, line, pos)
 
     def test_hover_capability(self):
         result = self._hover("  capability net_bind_service,", 15)
@@ -302,7 +455,18 @@ class TestHover:
         assert "network" in result.contents.value.lower()
 
     def test_hover_variable(self):
-        result = self._hover("  @{HOME}/** rw,", 5)
+        variables = {
+            "@{HOME}": VariableDefNode(
+                name="@{HOME}",
+                values=["/home/*/", "/root/"],
+                range=Range(
+                    start=Position(line=0, character=0),
+                    end=Position(line=0, character=0),
+                ),
+                raw="@{HOME} = /home/*/ /root/",
+            )
+        }
+        result = self._hover("  @{HOME}/** rw,", 5, variables=variables)
         assert result is not None
         assert (
             "HOME" in result.contents.value or "home" in result.contents.value.lower()

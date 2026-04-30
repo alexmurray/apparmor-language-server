@@ -31,7 +31,8 @@ from lsprotocol.types import (
 
 from .constants import (
     CAPABILITIES,
-    NETWORK_FAMILIES,
+    KEYWORD_DEFS,
+    NETWORK_DOMAINS,
     NETWORK_TYPES,
     PROFILE_FLAGS,
 )
@@ -106,8 +107,10 @@ def get_diagnostics(
             )
         )
 
-    # Collect defined variable names from document
-    defined_vars: set[str] = set(doc.variables.keys())
+    # Collect defined variable names from all_variables in document
+    defined_vars: set[str] = set()
+    for _, vars in doc.all_variables.items():
+        defined_vars.update(set(vars.keys()))
 
     for node in doc.children:
         _check_node(node, diags, defined_vars, doc.uri)
@@ -178,7 +181,7 @@ def _check_profile(
     for child in node.children:
         if isinstance(child, CapabilityNode):
             for cap in child.capabilities:
-                if "deny" in child.modifiers:
+                if "deny" in child.qualifiers:
                     deny_caps.add(cap)
                 else:
                     if cap in seen_caps:
@@ -244,7 +247,7 @@ def _check_network(
         p = part.strip().rstrip(",").lower()
         if not p:
             continue
-        if p not in NETWORK_FAMILIES and p not in NETWORK_TYPES:
+        if p not in NETWORK_DOMAINS and p not in NETWORK_TYPES:
             diags.setdefault(uri, []).append(
                 _diag(
                     node,
@@ -352,43 +355,19 @@ def _check_include(
 ) -> None:
     resolved = resolve_include_path(node.path, uri)
     if resolved is None:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"Include target '{node.path}' could not be found on disk.",
-                DiagnosticSeverity.Warning,
-                "missing-include",
+        # only an error if the include is not conditional
+        if not node.conditional:
+            diags.setdefault(uri, []).append(
+                _diag(
+                    node,
+                    f"Include target '{node.path}' could not be found on disk.",
+                    DiagnosticSeverity.Warning,
+                    "missing-include",
+                )
             )
-        )
 
 
 # ── Generic rule checks ───────────────────────────────────────────────────────
-
-_KNOWN_RULE_KEYWORDS = {
-    "capability",
-    "network",
-    "signal",
-    "ptrace",
-    "mount",
-    "umount",
-    "remount",
-    "pivot_root",
-    "unix",
-    "dbus",
-    "file",
-    "link",
-    "owner",
-    "deny",
-    "audit",
-    "change_profile",
-    "change_hat",
-    "rlimit",
-    "userns",
-    "io_uring",
-    "mqueue",
-    "alias",
-    "include",
-}
 
 
 def _check_generic(
@@ -402,7 +381,7 @@ def _check_generic(
     if not kw:
         return
 
-    if kw not in _KNOWN_RULE_KEYWORDS:
+    if kw not in KEYWORD_DEFS:
         # Could be a file path starting with a letter (unusual but valid)
         if not kw.startswith("/") and not kw.startswith("@"):
             diags.setdefault(uri, []).append(

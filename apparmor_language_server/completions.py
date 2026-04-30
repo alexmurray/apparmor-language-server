@@ -19,6 +19,7 @@ Completion contexts
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -33,22 +34,22 @@ from lsprotocol.types import (
 )
 
 from .constants import (
-    ABIS,
-    ABSTRACTIONS,
     CAPABILITIES,
     DBUS_BUSES,
     DBUS_PERMISSIONS,
-    FILE_PERMISSIONS,
     MOUNT_OPTIONS,
-    NETWORK_FAMILIES,
+    NETWORK_DOMAINS,
+    NETWORK_PERMISSIONS,
     NETWORK_TYPES,
+    PERMISSION_COMBINATIONS,
     PROFILE_FLAGS,
     PTRACE_PERMISSIONS,
+    QUALIFIERS,
+    RE_FILE_PERMISSIONS,
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
-    UNIX_PERMISSIONS,
-    VARIABLES,
 )
+from .parser import DocumentNode
 
 # ── Regex helpers ─────────────────────────────────────────────────────────────
 
@@ -56,30 +57,38 @@ _RE_ABI_START = re.compile(r"""^\s*#?abi\s+(<|")""")
 _RE_ABI_PATH = re.compile(r"""^\s*#?abi\s+[<"]([^>"]*)?,$""")
 _RE_INCLUDE_START = re.compile(r"""^\s*#?include\s+(<|")""")
 _RE_INCLUDE_PATH = re.compile(r"""^\s*#?include\s+[<"]([^>"]*)?$""")
-_RE_CAPABILITY = re.compile(r"^\s*(deny\s+|audit\s+)?capability\s+")
-_RE_NETWORK = re.compile(r"^\s*(deny\s+|audit\s+)?network\s+")
-_RE_SIGNAL = re.compile(r"^\s*(deny\s+|audit\s+)?signal\s+")
-_RE_PTRACE = re.compile(r"^\s*(deny\s+|audit\s+)?ptrace\s+")
-_RE_MOUNT = re.compile(r"^\s*(deny\s+|audit\s+)?(u?mount|remount)\s+")
-_RE_DBUS = re.compile(r"^\s*(deny\s+|audit\s+)?dbus\s+")
-_RE_UNIX = re.compile(r"^\s*(deny\s+|audit\s+)?unix\s+")
-_RE_PATH_START = re.compile(r"[\s{(]([/@~][^\s]*)$")
+_RE_QUALIFIERS = re.compile(r"^\s*((" + r"|".join(QUALIFIERS) + r")\s+)")
+_RE_CAPABILITY = re.compile(_RE_QUALIFIERS.pattern + r"*capability\s+")
+_RE_NETWORK = re.compile(_RE_QUALIFIERS.pattern + r"*network\s+")
+_RE_SIGNAL = re.compile(_RE_QUALIFIERS.pattern + r"*signal\s+")
+_RE_PTRACE = re.compile(_RE_QUALIFIERS.pattern + r"*ptrace\s+")
+_RE_MOUNT = re.compile(_RE_QUALIFIERS.pattern + r"*(mount|umount)\s+")
+_RE_DBUS = re.compile(_RE_QUALIFIERS.pattern + r"*dbus\s+")
+_RE_UNIX = re.compile(_RE_QUALIFIERS.pattern + r"*unix\s+")
+_RE_FILE_QUALIFIERS = re.compile(
+    r"^\s*((" + r"|".join(QUALIFIERS + ["owner"]) + r")\s+)"
+)
+_RE_PATH_START = re.compile(_RE_FILE_QUALIFIERS.pattern + r"*(file\s+)?([/@][^\s]*)$")
 _RE_AFTER_PATH = re.compile(
-    r"^\s*(deny\s+|audit\s+|owner\s+)?([/@~@][^\s]+)\s+([rwaxmlkdDuUipPcCbBI]*)$"
+    _RE_FILE_QUALIFIERS.pattern
+    + r"*(file\s+)?([/@][^\s]+)\s+"
+    + RE_FILE_PERMISSIONS.pattern
+    + "?$"
 )
 _RE_VAR_START = re.compile(r"@\{([A-Za-z_]*)$")
 _RE_PROFILE_FLAGS = re.compile(r"flags\s*=\s*\(([^)]*)$")
-_RE_MODIFIERS = re.compile(r"^\s*(deny|audit|owner)\s+$")
 
+
+logger = logging.getLogger(__name__)
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
 def get_completions(
+    doc: DocumentNode,
     line_text: str,
     position: Position,
     document_uri: str,
-    all_lines: list[str],
 ) -> CompletionList:
     """
     Return completion items for the given cursor position.
@@ -93,13 +102,15 @@ def get_completions(
     vm = _RE_VAR_START.search(prefix)
     if vm:
         partial = vm.group(1)
-        items = _complete_variables(partial)
+        logger.debug(f"Variable completion triggered with partial: '{partial}'")
+        items = _complete_variables(partial, doc)
         return CompletionList(is_incomplete=False, items=items)
 
     # ── ABI completion ────────────────────────────────────────────
     if _RE_ABI_START.match(prefix):
         im = _RE_ABI_PATH.match(prefix)
         partial = im.group(1) if im else ""
+        logger.debug(f"ABI completion triggered with partial: '{partial}'")
         items = _complete_abi_paths(partial, document_uri)
         return CompletionList(is_incomplete=False, items=items)
 
@@ -107,6 +118,7 @@ def get_completions(
     if _RE_INCLUDE_START.match(prefix):
         im = _RE_INCLUDE_PATH.match(prefix)
         partial = im.group(1) if im else ""
+        logger.debug(f"Include path completion triggered with partial: '{partial}'")
         items = _complete_include_paths(partial, document_uri)
         return CompletionList(is_incomplete=False, items=items)
 
@@ -114,6 +126,7 @@ def get_completions(
     fm = _RE_PROFILE_FLAGS.search(prefix)
     if fm:
         partial = fm.group(1).split(",")[-1].strip()
+        logger.debug(f"Profile flags completion triggered with partial: '{partial}'")
         items = _complete_profile_flags(partial)
         return CompletionList(is_incomplete=False, items=items)
 
@@ -123,6 +136,7 @@ def get_completions(
         # Don't re-complete 'capability' itself
         if partial in ("capability",):
             partial = ""
+        logger.debug(f"Capability completion triggered with partial: '{partial}'")
         items = _complete_capabilities(partial)
         return CompletionList(is_incomplete=False, items=items)
 
@@ -133,7 +147,7 @@ def get_completions(
         net_tokens = [t for t in tokens if t not in ("network", "deny", "audit")]
         if len(net_tokens) == 0:
             items = _complete_list(
-                NETWORK_FAMILIES, CompletionItemKind.Value, "Network family"
+                NETWORK_DOMAINS, CompletionItemKind.Value, "Network domain"
             )
         elif len(net_tokens) == 1:
             items = _complete_list(
@@ -186,26 +200,35 @@ def get_completions(
         tokens = [t for t in prefix.split() if t not in ("unix", "deny", "audit")]
         if len(tokens) == 0:
             items = _complete_list(
-                UNIX_PERMISSIONS, CompletionItemKind.Value, "Unix socket permission"
+                NETWORK_PERMISSIONS, CompletionItemKind.Value, "Unix socket permission"
             )
         return CompletionList(is_incomplete=False, items=items)
 
     # ── File permissions (after a path) ───────────────────────────────────
     am = _RE_AFTER_PATH.match(prefix)
     if am:
-        partial_perm = am.group(3) or ""
+        partial_perm = am.group(5) or ""
+        logger.debug(
+            f"File permission completion triggered with partial: '{partial_perm}'"
+        )
         items = _complete_file_permissions(partial_perm)
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Filesystem path ───────────────────────────────────────────────────
+    logger.debug(
+        f"Checking for filesystem path completion with prefix: '{prefix}' against regex: '{_RE_PATH_START.pattern}'"
+    )
     pm = _RE_PATH_START.search(prefix)
     if pm:
-        partial_path = pm.group(1)
-        items = _complete_filesystem_path(partial_path)
+        partial_path = pm.group(4)
+        logger.debug(
+            f"Filesystem path completion triggered with partial: '{partial_path}'"
+        )
+        items = _complete_filesystem_path(partial_path, doc)
         return CompletionList(is_incomplete=True, items=items)
 
-    # ── Modifier shorthand ────────────────────────────────────────────────
-    if _RE_MODIFIERS.match(prefix):
+    # ── Qualifier shorthand ────────────────────────────────────────────────
+    if _RE_QUALIFIERS.match(prefix):
         items = _complete_keywords("")
         return CompletionList(is_incomplete=False, items=items)
 
@@ -344,7 +367,7 @@ def _complete_capabilities(partial: str) -> list[CompletionItem]:
 def _complete_file_permissions(partial: str) -> list[CompletionItem]:
     """Complete file permission strings."""
     items: list[CompletionItem] = []
-    for perm, desc in FILE_PERMISSIONS.items():
+    for perm, desc in PERMISSION_COMBINATIONS.items():
         if not partial or perm.startswith(partial):
             items.append(
                 CompletionItem(
@@ -355,34 +378,6 @@ def _complete_file_permissions(partial: str) -> list[CompletionItem]:
                         kind=MarkupKind.Markdown,
                         value=f"**`{perm}`** — {desc}",
                     ),
-                )
-            )
-    # Common composite permission strings
-    composites = {
-        "r": "Read only",
-        "rw": "Read and write",
-        "rwx": "Read, write, execute (unconfined exec, use carefully)",
-        "rx": "Read and execute (inherit profile)",
-        "rix": "Read, inherit-exec",
-        "rPx": "Read, exec under named profile (safe)",
-        "rpx": "Read, exec under named profile",
-        "rcx": "Read, exec under child profile",
-        "rCx": "Read, exec under child profile (safe)",
-        "ra": "Read and append",
-        "rwk": "Read, write, lock",
-        "rwkl": "Read, write, lock, link",
-        "rm": "Read and mmap",
-        "l": "Hard-link",
-        "rl": "Read and hard-link",
-    }
-    for perm, desc in composites.items():
-        if not partial or perm.startswith(partial):
-            items.append(
-                CompletionItem(
-                    label=perm,
-                    kind=CompletionItemKind.Constant,
-                    detail=desc,
-                    sort_text=f"0{perm}",  # put composites first
                 )
             )
     return items
@@ -405,21 +400,6 @@ def _complete_abi_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
     items: list[CompletionItem] = []
     seen: set[str] = set()
 
-    # 1. Known ABIs list
-    for abs_path in ABIS:
-        if not partial or abs_path.startswith(partial):
-            label = abs_path
-            items.append(
-                CompletionItem(
-                    label=label,
-                    kind=CompletionItemKind.Module,
-                    detail="AppArmor ABI",
-                    insert_text=label,
-                )
-            )
-            seen.add(label)
-
-    # 2. Files on disk under search dirs
     for base in _APPARMOR_SEARCH_DIRS:
         if not base.is_dir():
             continue
@@ -451,21 +431,7 @@ def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
     items: list[CompletionItem] = []
     seen: set[str] = set()
 
-    # 1. Known abstractions list
-    for abs_path in ABSTRACTIONS:
-        if not partial or abs_path.startswith(partial):
-            label = abs_path
-            items.append(
-                CompletionItem(
-                    label=label,
-                    kind=CompletionItemKind.Module,
-                    detail="AppArmor abstraction",
-                    insert_text=label,
-                )
-            )
-            seen.add(label)
-
-    # 2. Files on disk under search dirs
+    # 1. Files on disk under search dirs
     for base in _APPARMOR_SEARCH_DIRS:
         if not base.is_dir():
             continue
@@ -486,7 +452,7 @@ def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
         except PermissionError:
             pass
 
-    # 3. Relative to document dir
+    # 2. Relative to document dir
     doc_path = Path(doc_uri.removeprefix("file://"))
     doc_dir = doc_path.parent
     partial_path = Path(partial) if partial else Path(".")
@@ -514,7 +480,7 @@ def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
 # ── Filesystem path completion ────────────────────────────────────────────────
 
 
-def _complete_filesystem_path(partial: str) -> list[CompletionItem]:
+def _complete_filesystem_path(partial: str, doc: DocumentNode) -> list[CompletionItem]:
     """
     Complete filesystem paths for file rules.
     Completes against the real filesystem plus known AppArmor path globs.
@@ -523,7 +489,7 @@ def _complete_filesystem_path(partial: str) -> list[CompletionItem]:
 
     # Variable-prefixed paths – just offer var names
     if partial.startswith("@"):
-        return _complete_variables(partial[2:] if partial.startswith("@{") else "")
+        return _complete_variables(partial[2:] if partial.startswith("@{") else "", doc)
 
     # Real filesystem
     try:
@@ -550,60 +516,31 @@ def _complete_filesystem_path(partial: str) -> list[CompletionItem]:
     except (PermissionError, OSError):
         pass
 
-    # Common AppArmor path patterns
-    patterns = [
-        "@{HOME}/",
-        "@{PROC}/",
-        "@{run}/",
-        "@{sys}/",
-        "/usr/lib/**",
-        "/usr/share/**",
-        "/var/log/",
-        "/tmp/",
-        "/etc/",
-        "/dev/null",
-        "/dev/urandom",
-        "/dev/random",
-        "/dev/tty",
-        "/proc/@{pid}/",
-        "/sys/kernel/",
-        "/run/user/@{uid}/",
-    ]
-    for pat in patterns:
-        if not partial or pat.startswith(partial):
-            items.append(
-                CompletionItem(
-                    label=pat,
-                    kind=CompletionItemKind.Constant,
-                    detail="AppArmor path pattern",
-                    sort_text="~" + pat,  # sort after real paths
-                )
-            )
-
     return items
 
 
 # ── Variable completions ──────────────────────────────────────────────────────
 
 
-def _complete_variables(partial: str) -> list[CompletionItem]:
+def _complete_variables(partial: str, doc: DocumentNode) -> list[CompletionItem]:
     items: list[CompletionItem] = []
-    for var, desc in VARIABLES.items():
-        name = var  # e.g. @{HOME}
-        inner = name[2:-1]  # HOME
-        if not partial or inner.lower().startswith(partial.lower()):
-            items.append(
-                CompletionItem(
-                    label=var,
-                    kind=CompletionItemKind.Variable,
-                    detail=desc,
-                    insert_text=inner + "}",  # cursor was after @{
-                    documentation=MarkupContent(
-                        kind=MarkupKind.Markdown,
-                        value=f"**`{var}`**\n\n{desc}",
-                    ),
+    for uri, vars in doc.all_variables.items():
+        for name, var in vars.items():
+            inner = name[2:-1]  # HOME
+            desc = f"Variable defined in {Path(uri).name} at line {var.range.start.line + 1}"
+            if not partial or inner.lower().startswith(partial.lower()):
+                items.append(
+                    CompletionItem(
+                        label=name,
+                        kind=CompletionItemKind.Variable,
+                        detail=desc,
+                        insert_text=inner + "}",  # cursor was after @{
+                        documentation=MarkupContent(
+                            kind=MarkupKind.Markdown,
+                            value=f"**`{name}`**\n\n{desc}",
+                        ),
+                    )
                 )
-            )
     return items
 
 
@@ -628,7 +565,7 @@ def _complete_profile_flags(partial: str) -> list[CompletionItem]:
 
 def _complete_dbus_keys() -> list[CompletionItem]:
     keys = [
-        ("bus", "bus=session|system|accessibility"),
+        ("bus", "bus=" + "|".join(DBUS_BUSES)),
         ("path", "path=/org/example/Path"),
         ("interface", "interface=org.example.Interface"),
         ("member", "member=MethodName"),

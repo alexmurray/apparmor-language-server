@@ -10,10 +10,15 @@ Produces a lightweight AST suitable for:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
+
+from lsprotocol.types import Position, Range
+
+from .constants import KEYWORD_DEFS, QUALIFIERS, RE_FILE_PERMISSIONS
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -40,20 +45,75 @@ RE_PROFILE_OPEN = re.compile(_PROFILE_OPEN_PAT)
 RE_HAT_OPEN = re.compile(r"^\s*hat\s+(?P<n>\S+)\s*\{")
 RE_PROFILE_CLOSE = re.compile(r"^\s*\}\s*,?\s*$")
 
+_RE_QUALIFIERS = re.compile(r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS) + r")\s+)*)")
 RE_CAPABILITY = re.compile(
-    r"^\s*(?:deny\s+|audit\s+)?capability\b\s*(?P<caps>[^{}\n]*?)\s*,?\s*$"
+    _RE_QUALIFIERS.pattern + r"?capability\b\s*(?P<caps>[^{}\n]*?)\s*,?\s*$"
 )
 RE_NETWORK = re.compile(
-    r"^\s*(?:deny\s+|audit\s+)?network\b\s*(?P<rest>[^{}\n,]*?)\s*,?\s*$"
+    _RE_QUALIFIERS.pattern + r"?network\b\s*(?P<rest>[^{}\n,]*?)\s*,?\s*$"
 )
-RE_FILE = re.compile(
-    r"^\s*(?P<mods>(?:(?:deny|audit|owner)\s+)*)"
-    r"(?P<path>[@{}/~][^\s]+)\s+"
-    r"(?P<perms>[rwaxmlkdDuUipPcCbBI]+)"
-    r"(?:\s*->\s*(?P<link_target>\S+))?"
-    r"\s*,?\s*$"
+_RE_FILE_QUALIFIERS = re.compile(
+    r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS + ["owner"]) + r")\s+)*)?"
+)
+RE_FILE_PREFIX = re.compile(
+    _RE_FILE_QUALIFIERS.pattern
+    + (
+        r"(?:file\s+)?"
+        r"(?P<perms>" + RE_FILE_PERMISSIONS.pattern + r")\s+"
+        r"(?P<path>[@/][^\s]+)"
+        r"(?:\s*->\s*(?P<link_target>\S+))?"
+        r"\s*,\s*$"
+    )
+)
+RE_FILE_SUFFIX = re.compile(
+    _RE_FILE_QUALIFIERS.pattern
+    + (
+        r"(?:file\s+)?"
+        r"(?P<path>[@/][^\s]+)\s+"
+        r"(?P<perms>" + RE_FILE_PERMISSIONS.pattern + r")"
+        r"(?:\s*->\s*(?P<link_target>\S+))?"
+        r"\s*,\s*$"
+    )
 )
 RE_ALIAS = re.compile(r"^\s*alias\s+(\S+)\s+->\s+(\S+)\s*,?\s*$")
+
+
+def _rule_ends_line(line: str) -> bool:
+    """Return True if *line* terminates an AppArmor rule.
+
+    A rule ends when its rightmost comma sits outside all parentheses and
+    quoted strings (paren depth 0).  Lines that end with something other than
+    a comma never terminate a rule and must be joined with the next line.
+    """
+    stripped = line.rstrip()
+    if not stripped.endswith(","):
+        return False
+    depth = 0
+    in_string = False
+    quote_char: Optional[str] = None
+    escaped = False
+    for ch in stripped:
+        if escaped:
+            escaped = False
+            continue
+        if in_string:
+            if ch == "\\":
+                escaped = True
+            elif ch == quote_char:
+                in_string = False
+        elif ch in "\"'":
+            in_string = True
+            quote_char = ch
+        elif ch in "({":
+            depth += 1
+        elif ch in ")}":
+            depth -= 1
+    return depth == 0 and not in_string
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
 
 
 def _line_opens_profile(line: str) -> bool:
@@ -73,30 +133,7 @@ def _line_opens_profile(line: str) -> bool:
     if RE_PROFILE_OPEN.match(line):
         # Make sure it's not a rule keyword masquerading as a profile
         first_tok = s.split()[0].rstrip("{")
-        rule_kws = {
-            "abi",
-            "capability",
-            "network",
-            "signal",
-            "ptrace",
-            "mount",
-            "umount",
-            "dbus",
-            "unix",
-            "deny",
-            "audit",
-            "owner",
-            "rlimit",
-            "include",
-            "change_profile",
-            "change_hat",
-            "alias",
-            "pivot_root",
-            "userns",
-            "io_uring",
-            "mqueue",
-        }
-        return first_tok not in rule_kws
+        return first_tok not in KEYWORD_DEFS.keys()
     return False
 
 
@@ -104,20 +141,7 @@ def _line_opens_profile(line: str) -> bool:
 
 
 @dataclass
-class Position:
-    line: int
-    character: int
-
-
-@dataclass
-class Range:
-    start: Position
-    end: Position
-
-
-@dataclass
 class Node:
-    uri: str
     range: Range
     raw: str
 
@@ -138,6 +162,10 @@ class IncludeNode(Node):
     path: str = ""
     angle_bracket: bool = True
     conditional: bool = False
+    # When we parse an include, we also parse the included document(s) and attach them here for easy access.
+    # Since includes can be a directory, this is a list of documents, not just one.
+    # Will be empty if the include file/dir was not found or could not be read.
+    documents: list[DocumentNode] = field(default_factory=list)
 
 
 @dataclass
@@ -145,30 +173,33 @@ class VariableDefNode(Node):
     name: str = ""
     values: list[str] = field(default_factory=list)
     augmented: bool = False
+    comments: list[CommentNode] = field(default_factory=list)
 
 
 @dataclass
-class FileRuleNode(Node):
-    modifiers: list[str] = field(default_factory=list)
+class RuleNode(Node):
+    qualifiers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FileRuleNode(RuleNode):
     path: str = ""
     perms: str = ""
     link_target: Optional[str] = None
 
 
 @dataclass
-class CapabilityNode(Node):
-    modifiers: list[str] = field(default_factory=list)
+class CapabilityNode(RuleNode):
     capabilities: list[str] = field(default_factory=list)
 
 
 @dataclass
-class NetworkNode(Node):
-    modifiers: list[str] = field(default_factory=list)
+class NetworkNode(RuleNode):
     rest: str = ""
 
 
 @dataclass
-class GenericRuleNode(Node):
+class GenericRuleNode(RuleNode):
     keyword: str = ""
     content: str = ""
 
@@ -177,14 +208,26 @@ class GenericRuleNode(Node):
 class AliasNode(Node):
     original: str = ""
     replacement: str = ""
+    comments: list[CommentNode] = field(default_factory=list)
 
 
 @dataclass
 class ProfileNode(Node):
     name: str = ""
+    attachment: Optional[str] = None
     flags: list[str] = field(default_factory=list)
     is_hat: bool = False
     children: list[Node] = field(default_factory=list)
+    comments: list[CommentNode] = field(default_factory=list)
+
+    # variables defined within this profile itself
+    @property
+    def variables(self) -> dict[str, VariableDefNode]:
+        vars = {}
+        for child in self.children:
+            if isinstance(child, VariableDefNode):
+                vars[child.name] = child
+        return vars
 
 
 @dataclass
@@ -193,8 +236,13 @@ class DocumentNode:
     children: list[Node] = field(default_factory=list)
     abi: Optional[ABINode] = None
     includes: list[IncludeNode] = field(default_factory=list)
+    # variables defined in the global scope of this document (i.e. outside of any profile)
     variables: dict[str, VariableDefNode] = field(default_factory=dict)
+    # all variables defined in this document and any in included documents -
+    # indexed by uri
+    all_variables: dict[str, dict[str, VariableDefNode]] = field(default_factory=dict)
     profiles: list[ProfileNode] = field(default_factory=list)
+    comments: list[CommentNode] = field(default_factory=list)
 
 
 # ── Parser ────────────────────────────────────────────────────────────────────
@@ -223,6 +271,7 @@ class Parser:
         self._uri = uri
         self._lines = text.splitlines()
         self._pos = 0
+        self._comments = list[CommentNode]()
         self.errors: list[ParseError] = []
 
     # ── Entry point ───────────────────────────────────────────────────────────
@@ -237,16 +286,40 @@ class Parser:
             doc.children.append(node)
             if isinstance(node, ABINode):
                 doc.abi = node
-            if isinstance(node, IncludeNode):
+            elif isinstance(node, IncludeNode):
                 doc.includes.append(node)
-                inc_doc = self._parse_include_node(node)
-                for inc in inc_doc:
-                    self._inherit_document_info(doc, inc)
+                # parse out the included document(s) immediately so we can
+                # report errors with correct line numbers, and also so we can
+                # resolve includes for goto-definition and hovers later without
+                # reparsing
+                self._parse_include_node(node)
             elif isinstance(node, VariableDefNode):
                 doc.variables[node.name] = node
             elif isinstance(node, ProfileNode):
                 doc.profiles.append(node)
+                # add an implicit variable called exec_path for the profile
+                # attachment if it exists
+                if node.attachment:
+                    exec_path_var = "@{exec_path}"
+                    doc.variables[exec_path_var] = VariableDefNode(
+                        range=node.range,
+                        raw=node.attachment,
+                        name=exec_path_var,
+                        values=[node.attachment],
+                    )
                 self._collect_includes(node, doc)
+
+        all_vars: dict[str, dict[str, VariableDefNode]] = {doc.uri: doc.variables}
+
+        def collect_vars(d: DocumentNode):
+            for inc in d.includes:
+                for inc_doc in inc.documents:
+                    all_vars[inc_doc.uri] = inc_doc.variables
+                    collect_vars(inc_doc)
+
+        collect_vars(doc)
+        doc.all_variables = all_vars
+
         return doc
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -265,15 +338,12 @@ class Parser:
         ec = len(el)
         return Range(Position(start_line, sc), Position(end_line, ec))
 
-    def _parse_include_path(self, path: Path) -> List[DocumentNode]:
+    def _parse_include_path(self, path: Path) -> list[DocumentNode]:
         # assume path is a directory
         docs = []
         try:
             for entry in path.iterdir():
-                with open(entry, "r") as f:
-                    text = f.read()
-                sub_parser = Parser(uri=str(entry), text=text)
-                docs.append(sub_parser.parse())
+                docs.extend(self._parse_include_path(entry))
         except NotADirectoryError:
             with open(path, "r") as f:
                 text = f.read()
@@ -281,54 +351,37 @@ class Parser:
             docs.append(sub_parser.parse())
         return docs
 
-    def _parse_include_node(self, include_node: IncludeNode) -> List[DocumentNode]:
-        docs = []
-        path = resolve_include_path(include_node.path, self._uri)
-        if path is None:
-            # is only an error when this is not a conditional include
-            if not include_node.conditional:
-                self.errors.append(
-                    ParseError(
-                        f"Included file '{include_node.path}' not found",
-                        include_node.path,
-                        include_node.range.start.line,
-                        include_node.range.start.character,
-                    )
-                )
-        else:
+    def _parse_include_node(self, include: IncludeNode):
+        path = resolve_include_path(include.path, self._uri)
+        if path is not None:
             try:
-                docs = self._parse_include_path(path)
+                include.documents = self._parse_include_path(path)
             except Exception as e:
                 self.errors.append(
                     ParseError(
-                        f"Error reading included file '{include_node.path}': {e}",
-                        include_node.path,
-                        include_node.range.start.line,
-                        include_node.range.start.character,
+                        f"Error reading included file '{include.path}': {e}",
+                        include.path,
+                        include.range.start.line,
+                        include.range.start.character,
                     )
                 )
-        return docs
-
-    def _inherit_document_info(self, doc: DocumentNode, included: DocumentNode) -> None:
-        for inc in included.includes:
-            if inc not in doc.includes:
-                doc.includes.append(inc)
-                for inc_doc in (
-                    self._parse_include_node(inc) for inc in included.includes
-                ):
-                    for inc in inc_doc:
-                        self._inherit_document_info(doc, inc)
-        for var in included.variables.values():
-            if var.name not in doc.variables:
-                doc.variables[var.name] = var
+        else:
+            # is only an error when this is not a conditional include
+            if not include.conditional:
+                self.errors.append(
+                    ParseError(
+                        f"Included file '{include.path}' not found",
+                        include.path,
+                        include.range.start.line,
+                        include.range.start.character,
+                    )
+                )
 
     def _collect_includes(self, profile: ProfileNode, doc: DocumentNode) -> None:
         for child in profile.children:
             if isinstance(child, IncludeNode):
                 doc.includes.append(child)
-                inc_doc = self._parse_include_node(child)
-                for inc in inc_doc:
-                    self._inherit_document_info(doc, inc)
+                self._parse_include_node(child)
 
             elif isinstance(child, ProfileNode):
                 self._collect_includes(child, doc)
@@ -344,12 +397,15 @@ class Parser:
             line = self._lines[self._pos]
 
             if RE_BLANK.match(line):
+                self._comments.clear()  # blank line resets comments
                 self._advance()
                 continue
 
             # Comment (unless it IS an include directive)
             if RE_COMMENT.match(line) and not RE_INCLUDE_GLOB.match(line):
-                return self._parse_comment()
+                comment = self._parse_comment()
+                self._comments.append(comment)
+                return comment
 
             if RE_ABI_GLOB.match(line):
                 return self._parse_abi()
@@ -386,7 +442,6 @@ class Parser:
         ln, raw = self._pos, self._lines[self._pos]
         self._advance()
         return CommentNode(
-            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             text=raw.strip().lstrip("#").strip(),
@@ -399,7 +454,6 @@ class Parser:
         angle = "<" in raw and ">" in raw
         self._advance()
         return ABINode(
-            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             path=path,
@@ -414,7 +468,6 @@ class Parser:
         angle = "<" in raw and ">" in raw
         self._advance()
         return IncludeNode(
-            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             path=path,
@@ -429,41 +482,49 @@ class Parser:
         name = m.group(1) if m else ""
         values = [v for v in (m.group(2) if m else "").split() if v]
         augmented = "+=" in raw
+        comments = self._comments
+        self._comments = list[CommentNode]()  # clear comments after consuming
         return VariableDefNode(
-            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             name=name,
             values=values,
             augmented=augmented,
+            comments=comments,
         )
 
     def _parse_alias(self) -> AliasNode:
         ln, raw = self._pos, self._lines[self._pos]
         m = RE_ALIAS.match(raw)
         self._advance()
+        comments = self._comments
+        self._comments = list[CommentNode]()  # clear comments after consuming
         return AliasNode(
-            uri=self._uri,
             range=self._make_range(ln, ln),
             raw=raw,
             original=m.group(1) if m else "",
             replacement=m.group(2) if m else "",
+            comments=comments,
         )
 
     def _parse_profile(self, is_hat: bool = False) -> ProfileNode:
         start_line = self._pos
         raw_start = self._lines[self._pos]
 
+        comments = self._comments
+        self._comments = list[CommentNode]()  # clear comments after consuming
         # --- Extract name and flags ---
         if is_hat:
             m = RE_HAT_OPEN.match(raw_start)
             name = m.group("n") if m else ""
+            attachment = None
             flags: list[str] = []
         else:
             m = RE_PROFILE_OPEN.match(raw_start)
             if m:
                 # 'n' is the profile name; 'att' is the optional binary attachment path
                 name = (m.group("n") or "").strip()
+                attachment = (m.group("att") or "").strip()
                 # Remove 'profile' keyword if it bled into name
                 if name == "profile":
                     name = (m.group("att") or "").strip()
@@ -481,13 +542,14 @@ class Parser:
             children = self._parse_inline_rules(inner_text, start_line)
             self._advance()
             return ProfileNode(
-                uri=self._uri,
                 range=self._make_range(start_line, start_line),
                 raw=raw_start,
                 name=name,
+                attachment=attachment,
                 flags=flags,
                 is_hat=is_hat,
                 children=children,
+                comments=comments,
             )
 
         # --- Multi-line profile ---
@@ -502,13 +564,14 @@ class Parser:
                 end_line = self._pos
                 self._advance()
                 return ProfileNode(
-                    uri=self._uri,
                     range=self._make_range(start_line, end_line),
                     raw=raw_start,
                     name=name,
+                    attachment=attachment,
                     flags=flags,
                     is_hat=is_hat,
                     children=children,
+                    comments=comments,
                 )
 
             child = self._parse_node()
@@ -517,13 +580,14 @@ class Parser:
                 end_line = self._pos
                 self._advance()
                 return ProfileNode(
-                    uri=self._uri,
                     range=self._make_range(start_line, end_line),
                     raw=raw_start,
                     name=name,
+                    attachment=attachment,
                     flags=flags,
                     is_hat=is_hat,
                     children=children,
+                    comments=comments,
                 )
             children.append(child)
 
@@ -532,13 +596,14 @@ class Parser:
             ParseError(f"Profile '{name}' not closed before EOF", self._uri, start_line)
         )
         return ProfileNode(
-            uri=self._uri,
             range=self._make_range(start_line, self._pos - 1),
             raw=raw_start,
             name=name,
+            attachment=attachment,
             flags=flags,
             is_hat=is_hat,
             children=children,
+            comments=comments,
         )
 
     def _parse_inline_rules(self, text: str, line_no: int) -> list[Node]:
@@ -560,73 +625,105 @@ class Parser:
         return children
 
     def _parse_rule(self) -> Node:
-        ln, raw = self._pos, self._lines[self._pos]
-        self._advance()
-        stripped = raw.strip()
+        start_line = self._pos
+        raw_lines: list[str] = []
+
+        # Accumulate lines until the rule is terminated (trailing comma at
+        # paren-depth 0) or until we hit a structural boundary.
+        while self._pos < len(self._lines):
+            line = self._lines[self._pos]
+            if RE_BLANK.match(line):
+                break
+            if RE_COMMENT.match(line) and not RE_INCLUDE_GLOB.match(line):
+                break
+            if RE_PROFILE_CLOSE.match(line):
+                break
+            raw_lines.append(line)
+            self._advance()
+            if _rule_ends_line(line):
+                break
+
+        if not raw_lines:
+            return GenericRuleNode(
+                range=self._make_range(start_line, start_line),
+                raw="",
+                keyword="",
+                content="",
+            )
+
+        end_line = self._pos - 1
+        raw = "\n".join(raw_lines)
+        # Normalise for regex matching: strip each line and join with a space
+        # so that multi-line rules look like a single logical line.
+        joined = " ".join(l.strip() for l in raw_lines)
 
         # -- Capability --
-        mc = RE_CAPABILITY.match(raw)
+        mc = RE_CAPABILITY.match(joined)
         if mc:
             caps_raw = mc.group("caps").strip()
             if "," in caps_raw:
                 caps = [c.strip() for c in caps_raw.split(",") if c.strip()]
             else:
                 caps = caps_raw.split()
-            mods = self._leading_mods(stripped)
             return CapabilityNode(
-                uri=self._uri,
-                range=self._make_range(ln, ln),
+                range=self._make_range(start_line, end_line),
                 raw=raw,
-                modifiers=mods,
+                qualifiers=self._leading_qualifiers(joined),
                 capabilities=caps,
             )
 
         # -- Network --
-        mn = RE_NETWORK.match(raw)
+        mn = RE_NETWORK.match(joined)
         if mn:
             return NetworkNode(
-                uri=self._uri,
-                range=self._make_range(ln, ln),
+                range=self._make_range(start_line, end_line),
                 raw=raw,
-                modifiers=self._leading_mods(stripped),
+                qualifiers=self._leading_qualifiers(joined),
                 rest=mn.group("rest").strip(),
             )
 
-        # -- File rule --
-        mf = RE_FILE.match(raw)
+        # -- File rule - permissions as prefix or suffix variants --
+        mf = None
+        for regexp in (RE_FILE_PREFIX, RE_FILE_SUFFIX):
+            mf = regexp.match(joined)
+            if mf:
+                break
         if mf:
-            mods_str = mf.group("mods") or ""
-            mods = mods_str.split()
+            quals_str = mf.group("quals") or ""
+            quals = quals_str.split()
+            logger.debug(
+                f"Creating FileRuleNode with qualifiers: {quals}, path: {mf.group('path')}, perms: {mf.group('perms')}"
+            )
             return FileRuleNode(
-                uri=self._uri,
-                range=self._make_range(ln, ln),
+                range=self._make_range(start_line, end_line),
                 raw=raw,
-                modifiers=mods,
+                qualifiers=quals,
                 path=mf.group("path"),
                 perms=mf.group("perms"),
                 link_target=mf.group("link_target"),
             )
 
         # -- Generic --
-        tokens = stripped.split()
+        tokens = joined.split()
         keyword = tokens[0] if tokens else ""
-        content = stripped[len(keyword) :].strip() if tokens else ""
+        content = joined[len(keyword) :].strip() if tokens else ""
         return GenericRuleNode(
-            uri=self._uri,
-            range=self._make_range(ln, ln),
+            range=self._make_range(start_line, end_line),
             raw=raw,
             keyword=keyword,
             content=content,
         )
 
     @staticmethod
-    def _leading_mods(stripped: str) -> list[str]:
-        mods = []
-        for kw in ("deny", "audit", "owner"):
+    def _leading_qualifiers(
+        stripped: str, qualifiers: list[str] = QUALIFIERS
+    ) -> list[str]:
+        quals = []
+        for kw in qualifiers:
             if stripped.startswith(kw + " "):
-                mods.append(kw)
+                quals.append(kw)
                 stripped = stripped[len(kw) :].lstrip()
-        return mods
+        return quals
 
 
 # ── Convenience helpers ───────────────────────────────────────────────────────

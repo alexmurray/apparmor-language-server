@@ -38,6 +38,7 @@ from lsprotocol.types import (
     TEXT_DOCUMENT_FORMATTING,
     TEXT_DOCUMENT_HOVER,
     TEXT_DOCUMENT_RANGE_FORMATTING,
+    TEXT_DOCUMENT_REFERENCES,
     WORKSPACE_SYMBOL,
     # Types
     CompletionList,
@@ -185,14 +186,19 @@ def did_close(ls: AppArmorLanguageServer, params: DidCloseTextDocumentParams):
 def completions(ls: AppArmorLanguageServer, params: CompletionParams) -> CompletionList:
     uri = params.text_document.uri
     position = params.position
-    text = ls.get_text(uri) or ""
+    text = ls.get_text(uri) or str("")
     lines = text.splitlines()
 
     if position.line >= len(lines):
         return CompletionList(is_incomplete=False, items=[])
 
     line_text = lines[position.line]
-    return get_completions(line_text, position, uri, lines)
+    cached = ls.get_cached(uri)
+    if cached is None:
+        cached = ls.parse_and_cache(uri, text)
+
+    doc, _ = cached
+    return get_completions(doc, line_text, position, uri)
 
 
 # ── Hover ─────────────────────────────────────────────────────────────────────
@@ -209,7 +215,12 @@ def hover(ls: AppArmorLanguageServer, params) -> Optional[Hover]:
         return None
 
     line_text = lines[position.line]
-    result = get_hover(line_text, position)
+    cached = ls.get_cached(uri)
+    if cached is None:
+        cached = ls.parse_and_cache(uri, text)
+
+    doc, _ = cached
+    result = get_hover(doc, line_text, position)
     if result is None:
         return None
 
@@ -248,6 +259,21 @@ def definition(
 
     doc, _ = cached
 
+    # Find an ABI node on this line
+    if doc.abi and doc.abi.range.start.line == position.line:
+        resolved = resolve_include_path(doc.abi.path, uri)
+        if resolved is not None:
+            target_uri = resolved.as_uri()
+            return [
+                Location(
+                    uri=target_uri,
+                    range=Range(
+                        start=Position(0, 0),
+                        end=Position(0, 0),
+                    ),
+                )
+            ]
+
     # Find an include node on this line
     for inc in doc.includes:
         if inc.range.start.line == position.line:
@@ -266,18 +292,8 @@ def definition(
 
     word = _word_at_position(line_text, position.character)
     if word:
-        logger.info(
-            "Definition request for word '%s' at %s:%d:%d",
-            word,
-            uri,
-            position.line,
-            position.character,
-        )
         # Find a profile name reference
         for profile in doc.profiles:
-            logger.debug(
-                "Checking profile '%s' for match with '%s'", profile.name, word
-            )
             if profile.name == word:
                 return [
                     Location(
@@ -291,23 +307,67 @@ def definition(
                     )
                 ]
 
-        for name, variable in doc.variables.items():
-            logger.debug("Checking variable '%s' for match with '%s'", name, word)
-            if name == word:
-                return [
-                    Location(
-                        uri=variable.uri,
-                        range=Range(
-                            start=Position(
-                                variable.range.start.line,
-                                variable.range.start.character,
+        for uri, vars in doc.all_variables.items():
+            for name, var in vars.items():
+                if name == word:
+                    return [
+                        Location(
+                            uri=uri,
+                            range=Range(
+                                start=Position(
+                                    var.range.start.line,
+                                    var.range.start.character,
+                                ),
+                                end=Position(var.range.start.line, 999),
                             ),
-                            end=Position(variable.range.start.line, 999),
-                        ),
-                    )
-                ]
+                        )
+                    ]
 
     return None
+
+
+# ── References ───────────────────────────────────────────────────────
+
+
+@server.feature(TEXT_DOCUMENT_REFERENCES)
+def references(
+    ls: AppArmorLanguageServer, params: DefinitionParams
+) -> Optional[list[Location]]:
+    uri = params.text_document.uri
+    position = params.position
+    text = ls.get_text(uri) or ""
+    lines = text.splitlines()
+
+    if position.line >= len(lines):
+        return None
+
+    line_text = lines[position.line]
+    cached = ls.get_cached(uri)
+    if cached is None:
+        cached = ls.parse_and_cache(uri, text)
+
+    doc, _ = cached
+
+    word = _word_at_position(line_text, position.character)
+    if not word:
+        return None
+
+    results: list[Location] = []
+    pattern = re.compile(rf"\b{re.escape(word)}\b")
+
+    for line_no, line in enumerate(lines):
+        for m in pattern.finditer(line):
+            results.append(
+                Location(
+                    uri=uri,
+                    range=Range(
+                        start=Position(line_no, m.start()),
+                        end=Position(line_no, m.end()),
+                    ),
+                )
+            )
+
+    return results
 
 
 # ── Document Highlights ───────────────────────────────────────────────────────
