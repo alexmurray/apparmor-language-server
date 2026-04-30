@@ -32,13 +32,17 @@ from .constants import (
     CAPABILITIES,
     KEYWORD_DEFS,
     NETWORK_DOMAINS,
+    NETWORK_PERMISSIONS,
+    NETWORK_PROTOCOLS,
     NETWORK_TYPES,
     PROFILE_FLAGS,
+    PTRACE_PERMISSIONS,
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
 )
 from .parser import (
     ABINode,
+    AllRuleNode,
     CapabilityNode,
     ChangeHatRuleNode,
     ChangeProfileRuleNode,
@@ -48,6 +52,7 @@ from .parser import (
     FileRuleNode,
     IncludeNode,
     IoUringRuleNode,
+    LinkRuleNode,
     MountRuleNode,
     MqueueRuleNode,
     NetworkNode,
@@ -56,6 +61,7 @@ from .parser import (
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
+    RemountRuleNode,
     RlimitRuleNode,
     SignalRuleNode,
     UmountRuleNode,
@@ -69,7 +75,10 @@ from .parser import (
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 # Dangerous unconfined exec permissions
-_DANGEROUS_PERMS = {"ux", "Ux", "pux", "cux"}
+_DANGEROUS_PERMS = {"ux", "Ux", "pux", "PUx", "cux", "CUx"}
+
+_RE_PAREN_GROUP = re.compile(r"\([^)]*\)")
+_RE_RTMIN = re.compile(r"^rtmin\+\d+$")
 
 
 def _lsp_range(node: Node) -> Range:
@@ -143,6 +152,9 @@ def _check_node(
         _check_network(node, diags, uri)
     elif isinstance(node, SignalRuleNode):
         _check_signal(node, diags, uri)
+    elif isinstance(node, PtraceRuleNode):
+        _check_ptrace(node, diags, uri)
+        _check_var_refs(node, diags, uri, defined_vars)
     elif isinstance(node, FileRuleNode):
         _check_file_rule(node, diags, uri, defined_vars)
     elif isinstance(node, ABINode):
@@ -152,7 +164,6 @@ def _check_node(
     elif isinstance(
         node,
         (
-            PtraceRuleNode,
             DbusRuleNode,
             UnixRuleNode,
             MountRuleNode,
@@ -164,6 +175,9 @@ def _check_node(
             PivotRootRuleNode,
             ChangeProfileRuleNode,
             ChangeHatRuleNode,
+            LinkRuleNode,
+            AllRuleNode,
+            RemountRuleNode,
         ),
     ):
         _check_var_refs(node, diags, uri, defined_vars)
@@ -273,17 +287,27 @@ def _check_capability(
 def _check_network(
     node: NetworkNode, diags: dict[str, list[Diagnostic]], uri: str
 ) -> None:
-    parts = node.rest.split()
+    rest = node.rest
+    # Remove parenthesized groups (access lists, peer conditionals)
+    rest = _RE_PAREN_GROUP.sub("", rest)
+    parts = rest.split()
+    _VALID_NETWORK_TOKENS = (
+        set(NETWORK_DOMAINS)
+        | set(NETWORK_TYPES)
+        | set(NETWORK_PERMISSIONS)
+        | set(NETWORK_PROTOCOLS)
+        | {"peer"}
+    )
     for part in parts:
         p = part.strip().rstrip(",").lower()
-        if not p:
+        if not p or "=" in p:
             continue
-        if p not in NETWORK_DOMAINS and p not in NETWORK_TYPES:
+        if p not in _VALID_NETWORK_TOKENS:
             diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unknown network qualifier '{part}'. Expected a family "
-                    "(e.g. inet, inet6) or type (e.g. stream, dgram).",
+                    "(e.g. inet, inet6), type (e.g. stream, dgram), or access permission.",
                     DiagnosticSeverity.Warning,
                     "unknown-network-qualifier",
                 )
@@ -307,13 +331,41 @@ def _check_signal(
                 )
             )
     for name in node.signal_set:
-        if name.lower() not in SIGNAL_NAMES:
+        if name.lower() not in SIGNAL_NAMES and not _RE_RTMIN.match(name.lower()):
             diags.setdefault(uri, []).append(
                 _diag(
                     node,
                     f"Unknown signal name '{name}'. Expected a signal name such as term, kill, hup.",
                     DiagnosticSeverity.Warning,
                     "unknown-signal-name",
+                )
+            )
+
+
+# ── Ptrace checks ────────────────────────────────────────────────────────────
+
+
+def _check_ptrace(
+    node: PtraceRuleNode, diags: dict[str, list[Diagnostic]], uri: str
+) -> None:
+    content = node.content.strip()
+    if content.startswith("("):
+        perm_str = (
+            content[1 : content.find(")")].strip() if ")" in content else content[1:]
+        )
+    else:
+        # bare permission before "peer="
+        perm_str = content.split("peer=")[0].strip()
+    perms = perm_str.replace(",", " ").split()
+    for perm in perms:
+        p = perm.strip().lower()
+        if p and p not in PTRACE_PERMISSIONS:
+            diags.setdefault(uri, []).append(
+                _diag(
+                    node,
+                    f"Unknown ptrace permission '{perm}'. Expected one of: {', '.join(PTRACE_PERMISSIONS)}.",
+                    DiagnosticSeverity.Warning,
+                    "unknown-ptrace-permission",
                 )
             )
 

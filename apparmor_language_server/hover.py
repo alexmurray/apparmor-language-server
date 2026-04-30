@@ -47,6 +47,7 @@ from .constants import (
 )
 from .parser import (
     ABINode,
+    AllRuleNode,
     CapabilityNode,
     ChangeHatRuleNode,
     ChangeProfileRuleNode,
@@ -56,6 +57,7 @@ from .parser import (
     FileRuleNode,
     IncludeNode,
     IoUringRuleNode,
+    LinkRuleNode,
     MountRuleNode,
     MqueueRuleNode,
     NetworkNode,
@@ -63,6 +65,7 @@ from .parser import (
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
+    RemountRuleNode,
     RlimitRuleNode,
     SignalRuleNode,
     UmountRuleNode,
@@ -164,6 +167,12 @@ def _hover_for_node(node: Node, line_text: str, ch: int) -> Optional[Hover]:
         (UsernsRuleNode, PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode),
     ):
         return _hover_keyword_rule(line_text, ch)
+    if isinstance(node, LinkRuleNode):
+        return _hover_link(line_text, ch)
+    if isinstance(node, AllRuleNode):
+        return _hover_keyword_rule(line_text, ch)
+    if isinstance(node, RemountRuleNode):
+        return _hover_mount(line_text, ch)
     if isinstance(node, UnknownRuleNode):
         return _hover_unknown(line_text, ch)
     # VariableDefNode: the @{name} token is already handled by _RE_VAR above.
@@ -379,6 +388,25 @@ def _hover_keyword_rule(line_text: str, ch: int) -> Optional[Hover]:
     kw_def = KEYWORD_DEFS.get(word)
     if kw_def:
         return _make_hover(kw_def.doc, ws, we)
+    return None
+
+
+def _hover_link(line_text: str, ch: int) -> Optional[Hover]:
+    word, ws, we = _word_at(line_text, ch)
+    if not word:
+        return None
+    if word in QUALIFIER_DEFS:
+        return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
+    if word in ("link", "subset"):
+        kw_def = KEYWORD_DEFS.get("link")
+        if kw_def:
+            return _make_hover(kw_def.doc, ws, we)
+    if word == "owner":
+        return _make_hover(
+            "**Qualifier `owner`**\n\nRestrict the rule to files owned by the running process's UID.",
+            ws,
+            we,
+        )
     return None
 
 

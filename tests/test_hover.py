@@ -402,3 +402,54 @@ class TestNetworkPermissionHover:
 
     def test_hover_network_permission_connect(self):
         assert "connect" in _rule_text("  network (connect) inet,", 12).lower()
+
+
+# ── Link rule hover ───────────────────────────────────────────────────────────
+
+
+class TestLinkHover:
+    def test_hover_link_keyword(self):
+        # char 4 lands on 'i' of 'link'
+        assert "link" in _rule_text("  link /foo -> /bar,", 4).lower()
+
+    def test_hover_link_subset_keyword(self):
+        # char 4 lands on 'i' of 'link'
+        assert "link" in _rule_text("  link subset /foo -> /bar,", 4).lower()
+
+    def test_hover_subset_word(self):
+        # char 10 lands within 'subset'
+        assert "link" in _rule_text("  link subset /foo -> /bar,", 10).lower()
+
+
+# ── Ptrace shorthand permission hover ─────────────────────────────────────────
+
+
+class TestPtraceShorthandHover:
+    def test_hover_ptrace_r_permission(self):
+        # char 12 lands on 'r' inside ptrace (r)
+        result = _rule_text("  ptrace (r) peer=@{profile_name},", 10)
+        assert result is not None
+        assert "ptrace" in result.lower() or "read" in result.lower()
+
+    def test_hover_ptrace_rw_permission(self):
+        # char 10 lands within 'rw'
+        result = _rule_text("  ptrace (rw) peer=@{profile_name},", 10)
+        assert result is not None
+
+
+# ── Remount hover ─────────────────────────────────────────────────────────────
+
+
+class TestRemountHover:
+    def test_hover_remount_keyword(self):
+        # char 4 lands on 'e' of 'remount'
+        assert "remount" in _rule_text("  remount /mnt/,", 4).lower()
+
+
+# ── All rule hover ────────────────────────────────────────────────────────────
+
+
+class TestAllRuleHover:
+    def test_hover_all_keyword(self):
+        # char 4 lands on 'l' of 'all'
+        assert "all" in _rule_text("  all,", 4).lower()

@@ -27,7 +27,9 @@ RE_COMMENT = re.compile(r"^\s*#.*$")
 RE_ABI_GLOB = re.compile(r"""^\s*#?abi\s+[<"]([^>"]+)[>"],""")
 RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]?""")
 RE_INCLUDE_IF = re.compile(r"""^\s*include\s+if\s+exists\s+[<"]([^>"]+)[>"]?""")
-RE_VARIABLE_DEF = re.compile(r"^\s*(@\{[A-Za-z_][A-Za-z0-9_]*\})\s*[+]?=\s*(.*)$")
+RE_VARIABLE_DEF = re.compile(
+    r"^\s*(@\{[A-Za-z_][A-Za-z0-9_]*\})\s*(?:\+=|\?=|:=|=)\s*(.*)$"
+)
 
 # Matches all profile/sub-profile opening lines, e.g.:
 #   profile myapp /usr/bin/myapp {
@@ -305,6 +307,23 @@ class ChangeHatRuleNode(RuleNode):
 
 
 @dataclass
+class LinkRuleNode(RuleNode):
+    subset: bool = False
+    link: str = ""
+    target: str = ""
+
+
+@dataclass
+class AllRuleNode(RuleNode):
+    pass
+
+
+@dataclass
+class RemountRuleNode(RuleNode):
+    content: str = ""
+
+
+@dataclass
 class UnknownRuleNode(RuleNode):
     keyword: str = ""
     content: str = ""
@@ -322,6 +341,9 @@ _KEYWORD_TO_NODE_CLASS: dict[str, Any] = {
     "pivot_root": PivotRootRuleNode,
     "change_profile": ChangeProfileRuleNode,
     "change_hat": ChangeHatRuleNode,
+    "link": LinkRuleNode,
+    "all": AllRuleNode,
+    "remount": RemountRuleNode,
 }
 
 
@@ -653,6 +675,7 @@ class Parser:
                 flags = [f.strip() for f in flags_str.split(",") if f.strip()]
             else:
                 name = ""
+                attachment = None
                 flags = []
 
         # --- Single-line profile? e.g.  profile x { cap kill, } ---
@@ -823,7 +846,7 @@ class Parser:
             if mf:
                 break
         if mf:
-            quals_str = mf.group("quals") or ""
+            quals_str = str(mf.group("quals") or "")
             quals = quals_str.split()
             logger.debug(
                 f"Creating FileRuleNode with qualifiers: {quals}, path: {mf.group('path')}, perms: {mf.group('perms')}"
@@ -858,6 +881,22 @@ class Parser:
 
         node_class = _KEYWORD_TO_NODE_CLASS.get(keyword)
         if node_class is not None:
+            if node_class is LinkRuleNode:
+                subset = content.startswith("subset")
+                rest = content[len("subset") :].strip() if subset else content
+                parts = rest.split("->")
+                link_path = parts[0].strip() if parts else ""
+                target_path = parts[1].strip().rstrip(",") if len(parts) > 1 else ""
+                return LinkRuleNode(
+                    range=rng,
+                    raw=raw,
+                    qualifiers=quals,
+                    subset=subset,
+                    link=link_path,
+                    target=target_path,
+                )
+            if node_class is AllRuleNode:
+                return AllRuleNode(range=rng, raw=raw, qualifiers=quals)
             return node_class(range=rng, raw=raw, qualifiers=quals, content=content)
 
         return UnknownRuleNode(

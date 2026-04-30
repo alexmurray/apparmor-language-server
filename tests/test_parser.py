@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from apparmor_language_server.parser import (
     ABINode,
+    AllRuleNode,
     AliasNode,
     CapabilityNode,
     ChangeHatRuleNode,
@@ -14,11 +15,14 @@ from apparmor_language_server.parser import (
     DbusRuleNode,
     FileRuleNode,
     IoUringRuleNode,
+    LinkRuleNode,
     MqueueRuleNode,
     NetworkNode,
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
+    RE_VARIABLE_DEF,
+    RemountRuleNode,
     SignalRuleNode,
     UnixRuleNode,
     UsernsRuleNode,
@@ -699,3 +703,69 @@ profile webapp /usr/sbin/apache2 {
         assert len(hats) == 1
         assert hats[0].name == "DEFAULT"
         assert hats[0].is_hat is True
+
+
+# ── Variable assignment operators ─────────────────────────────────────────────
+
+
+class TestVariableAssignmentOperators:
+    def test_re_variable_def_matches_equals(self):
+        assert RE_VARIABLE_DEF.match("@{HOME} = /home/*/")
+
+    def test_re_variable_def_matches_plus_equals(self):
+        assert RE_VARIABLE_DEF.match("@{HOME} += /root/")
+
+    def test_re_variable_def_matches_question_equals(self):
+        assert RE_VARIABLE_DEF.match("@{HOME} ?= /home/*/")
+
+    def test_re_variable_def_matches_colon_equals(self):
+        assert RE_VARIABLE_DEF.match("@{HOME} := /home/*/")
+
+    def test_question_equals_parses(self):
+        src = "@{MYVAR} ?= /opt/myapp/\nprofile x { }\n"
+        doc, _ = parse_document("file:///test.aa", src)
+        assert "@{MYVAR}" in doc.variables
+
+    def test_colon_equals_parses(self):
+        src = "@{MYVAR} := /opt/myapp/\nprofile x { }\n"
+        doc, _ = parse_document("file:///test.aa", src)
+        assert "@{MYVAR}" in doc.variables
+
+
+# ── New rule types ────────────────────────────────────────────────────────────
+
+
+class TestNewRuleTypes:
+    def test_link_rule_parsed(self):
+        src = "profile x {\n  link /foo -> /bar,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        assert len(errors) == 0
+        links = [c for c in doc.profiles[0].children if isinstance(c, LinkRuleNode)]
+        assert len(links) == 1
+        assert links[0].link == "/foo"
+        assert links[0].target == "/bar"
+        assert links[0].subset is False
+
+    def test_link_subset_rule_parsed(self):
+        src = "profile x {\n  link subset /link -> /**,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        assert len(errors) == 0
+        links = [c for c in doc.profiles[0].children if isinstance(c, LinkRuleNode)]
+        assert len(links) == 1
+        assert links[0].subset is True
+        assert links[0].link == "/link"
+        assert links[0].target == "/**"
+
+    def test_all_rule_parsed(self):
+        src = "profile x {\n  all,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        assert len(errors) == 0
+        all_rules = [c for c in doc.profiles[0].children if isinstance(c, AllRuleNode)]
+        assert len(all_rules) == 1
+
+    def test_remount_rule_parsed(self):
+        src = "profile x {\n  remount /mnt,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        assert len(errors) == 0
+        remount_rules = [c for c in doc.profiles[0].children if isinstance(c, RemountRuleNode)]
+        assert len(remount_rules) == 1

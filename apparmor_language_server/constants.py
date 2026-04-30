@@ -202,6 +202,11 @@ NETWORK_PERMISSIONS: list[str] = [
     "getattr",
     "setattr",
     "shutdown",
+    "r",
+    "w",
+    "rw",
+    "getopt",
+    "setopt",
 ]
 
 NETWORK_DOMAINS: list[str] = [
@@ -281,6 +286,8 @@ UNIX_TYPES: list[str] = [
 SIGNAL_PERMISSIONS: list[str] = [
     "send",
     "receive",
+    "read",
+    "write",
     "r",
     "w",
     "rw",
@@ -306,6 +313,7 @@ SIGNAL_NAMES: list[str] = [
     "cont",
     "stop",
     "tstp",
+    "stp",
     "ttin",
     "ttou",
     "urg",
@@ -317,6 +325,9 @@ SIGNAL_NAMES: list[str] = [
     "io",
     "pwr",
     "sys",
+    "stkflt",
+    "emt",
+    "exists",
     "rtmin",
     "rtmax",
 ]
@@ -337,6 +348,15 @@ PTRACE_DEFS: dict[str, KeywordDef] = {
     ),
     "tracedby": KeywordDef(
         doc="**ptrace permission `tracedby`**\n\nAllow the process to be ptrace'd by processes matched by `peer=`.",
+    ),
+    "r": KeywordDef(
+        doc="**ptrace permission `r`**\n\nShorthand for `read`. Allow reading the state of processes matched by `peer=`.",
+    ),
+    "w": KeywordDef(
+        doc="**ptrace permission `w`**\n\nShorthand for `write`. Allow writing/tracing processes matched by `peer=`.",
+    ),
+    "rw": KeywordDef(
+        doc="**ptrace permission `rw`**\n\nShorthand for read+write. Allow reading and tracing processes matched by `peer=`.",
     ),
 }
 
@@ -434,6 +454,36 @@ MOUNT_OPTION_DEFS: dict[str, KeywordDef] = {
         doc="**Mount option `slave`**\n\nReceive propagation from master but do not propagate back."
     ),
     "rslave": KeywordDef(doc="**Mount option `rslave`**\n\nRecursively slave."),
+    "atime": KeywordDef(
+        doc="**Mount option `atime`**\n\nUpdate access times on reads."
+    ),
+    "diratime": KeywordDef(
+        doc="**Mount option `diratime`**\n\nUpdate directory access times."
+    ),
+    "verbose": KeywordDef(
+        doc="**Mount option `verbose`**\n\nEnable verbose mount output."
+    ),
+    "loud": KeywordDef(
+        doc="**Mount option `loud`**\n\nAlias for `verbose`; enable verbose mount output."
+    ),
+    "norelatime": KeywordDef(
+        doc="**Mount option `norelatime`**\n\nDisable relative access time updates."
+    ),
+    "nostrictatime": KeywordDef(
+        doc="**Mount option `nostrictatime`**\n\nDisable strict access time updates."
+    ),
+    "nouser": KeywordDef(
+        doc="**Mount option `nouser`**\n\nOnly root may mount the filesystem."
+    ),
+    "user": KeywordDef(
+        doc="**Mount option `user`**\n\nAllow an ordinary user to mount the filesystem."
+    ),
+    "symfollow": KeywordDef(
+        doc="**Mount option `symfollow`**\n\nFollow symbolic links during mount resolution."
+    ),
+    "nosymfollow": KeywordDef(
+        doc="**Mount option `nosymfollow`**\n\nDo not follow symbolic links during mount resolution."
+    ),
 }
 
 MOUNT_OPTIONS: list[str] = list(MOUNT_OPTION_DEFS.keys())
@@ -573,6 +623,9 @@ MQUEUE_PERMISSION_DEFS: dict[str, KeywordDef] = {
     "setattr": KeywordDef(
         doc="**mqueue permission `setattr`**\n\nSet message queue attributes."
     ),
+    "r": KeywordDef(doc="**mqueue permission `r`**\n\nShorthand for `read`."),
+    "w": KeywordDef(doc="**mqueue permission `w`**\n\nShorthand for `write`."),
+    "rw": KeywordDef(doc="**mqueue permission `rw`**\n\nShorthand for read+write."),
 }
 
 ## ── Keyword definitions ───────────────────────────────────────────────────────
@@ -796,6 +849,34 @@ KEYWORD_DEFS: dict[str, KeywordDef] = {
             " type=${2:posix} name=${3:/name},"
         ),
     ),
+    "link": KeywordDef(
+        doc=(
+            "## `link`\n\n"
+            "Allow creating a hard link.\n\n"
+            "```\nlink /link -> /target,\nlink subset /foo -> /**,\n```\n\n"
+            "The `subset` option requires that the permissions on the link are a subset of the target's permissions.\n"
+        ),
+        detail="Allow creating a hard link.",
+        snippet="link ${1:/link} -> ${2:/target},",
+    ),
+    "all": KeywordDef(
+        doc=(
+            "## `all`\n\n"
+            "Allow all access. Grants every permission for every resource type.\n\n"
+            "```\nall,\n```\n"
+        ),
+        detail="Allow all access.",
+        snippet="all,",
+    ),
+    "remount": KeywordDef(
+        doc=(
+            "## `remount`\n\n"
+            "Allow remounting an already-mounted filesystem with new options.\n\n"
+            "```\nremount options=(ro,nodev) /mnt/data,\n```\n"
+        ),
+        detail="Allow remounting a filesystem with new options.",
+        snippet="remount ${1:/mnt/},",
+    ),
 }
 
 # ── File permissions ──────────────────────────────────────────────────────────
@@ -824,9 +905,9 @@ EXECUTE_PERMISSIONS: dict[str, str] = {
     "cix": "Execute under child profile or inherit",
     "Cix": "Execute under child profile (safe) or inherit",
     "pux": "Execute under named profile or unconfined",
-    "Pux": "Execute under named profile (safe) or unconfined",
+    "PUx": "Execute under named profile (safe) or unconfined",
     "cux": "Execute under child profile or unconfined",
-    "Cux": "Execute under child profile (safe) or unconfined",
+    "CUx": "Execute under child profile (safe) or unconfined",
 }
 
 RE_FILE_PERMISSIONS = re.compile(
@@ -903,6 +984,21 @@ FLAG_DEFS: dict[str, KeywordDef] = {
     ),
     "no_attach_disconnected": KeywordDef(
         doc="**Profile flag `no_attach_disconnected`**\n\nDisable attach_disconnected behaviour.",
+    ),
+    "default_allow": KeywordDef(
+        doc="**Profile flag `default_allow`**\n\nChange the default behaviour from deny to allow. Operations not covered by a rule will be allowed (similar to unconfined but allow/deny rules still apply).",
+    ),
+    "audit": KeywordDef(
+        doc="**Profile flag `audit`**\n\nCauses all operations, whether allowed or denied, to be logged to the audit system.",
+    ),
+    "attach_disconnected.ipc": KeywordDef(
+        doc="**Profile flag `attach_disconnected.ipc`**\n\nA subset of attach_disconnected specific to IPC namespaces. Allows attaching disconnected POSIX mqueue paths without having to allow all disconnected files.",
+    ),
+    "kill.signal": KeywordDef(
+        doc="**Profile flag `kill.signal`**\n\nSpecify the signal sent by AppArmor when in kill mode (e.g. `kill.signal=kill`). Format: `kill.signal=SIGNAL`.",
+    ),
+    "error": KeywordDef(
+        doc="**Profile flag `error`**\n\nChange the error code returned on a policy violation (e.g. `error=EPERM`). Format: `error=ERRORCODE`.",
     ),
 }
 

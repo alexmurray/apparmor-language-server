@@ -186,3 +186,101 @@ class TestIncludeDiagnostics:
         src = "include <totally/nonexistent>\nprofile x { capability kill, }\n"
         codes = _codes(src)
         assert "missing-include" in codes
+
+
+# ── Network access permission / protocol false positives ──────────────────────
+
+
+class TestNetworkAccessPermissions:
+    def test_network_access_perms_no_false_positive(self):
+        src = "profile x {\n  network (send receive) inet,\n}\n"
+        codes = _codes(src)
+        assert "unknown-network-qualifier" not in codes
+
+    def test_network_protocol_no_false_positive(self):
+        src = "profile x {\n  network inet tcp,\n}\n"
+        codes = _codes(src)
+        assert "unknown-network-qualifier" not in codes
+
+
+# ── Signal rtmin+N ────────────────────────────────────────────────────────────
+
+
+class TestSignalRtmin:
+    def test_rtmin_plus_n_accepted(self):
+        src = "profile x {\n  signal set=(rtmin+5),\n}\n"
+        codes = _codes(src)
+        assert "unknown-signal-name" not in codes
+
+    def test_signal_read_write_accepted(self):
+        src = "profile x {\n  signal (read write) set=(term),\n}\n"
+        codes = _codes(src)
+        assert "unknown-signal-permission" not in codes
+
+
+# ── Ptrace permission checks ──────────────────────────────────────────────────
+
+
+class TestPtraceDiagnostics:
+    def test_ptrace_invalid_perm_flagged(self):
+        src = "profile x {\n  ptrace (notaperm),\n}\n"
+        assert "unknown-ptrace-permission" in _codes(src)
+
+    def test_ptrace_valid_perms_no_diagnostic(self):
+        src = "profile x {\n  ptrace (read trace),\n}\n"
+        codes = _codes(src)
+        assert "unknown-ptrace-permission" not in codes
+
+    def test_ptrace_shorthand_r_accepted(self):
+        src = "profile x {\n  ptrace (r),\n}\n"
+        codes = _codes(src)
+        assert "unknown-ptrace-permission" not in codes
+
+    def test_ptrace_shorthand_rw_accepted(self):
+        src = "profile x {\n  ptrace (rw),\n}\n"
+        codes = _codes(src)
+        assert "unknown-ptrace-permission" not in codes
+
+
+# ── Profile flag checks ───────────────────────────────────────────────────────
+
+
+class TestNewProfileFlags:
+    def test_default_allow_flag_valid(self):
+        src = "profile x flags=(default_allow) {\n  capability kill,\n}\n"
+        codes = _codes(src)
+        assert "unknown-flag" not in codes
+
+    def test_audit_flag_valid(self):
+        src = "profile x flags=(audit) {\n  capability kill,\n}\n"
+        codes = _codes(src)
+        assert "unknown-flag" not in codes
+
+
+# ── New rule type diagnostic checks ──────────────────────────────────────────
+
+
+class TestNewRuleDiagnostics:
+    def test_link_rule_no_unknown_keyword(self):
+        src = "profile x {\n  link /foo -> /bar,\n}\n"
+        codes = _codes(src)
+        assert "unknown-keyword" not in codes
+
+    def test_all_rule_no_unknown_keyword(self):
+        src = "profile x {\n  all,\n}\n"
+        codes = _codes(src)
+        assert "unknown-keyword" not in codes
+
+    def test_pux_dangerous_but_not_unknown(self):
+        src = "profile x {\n  /usr/bin/foo PUx,\n}\n"
+        codes = _codes(src)
+        # PUx is dangerous - should get dangerous-exec warning
+        assert "dangerous-exec" in codes
+        # but should not be unknown
+        assert "unknown-keyword" not in codes
+
+    def test_cux_dangerous_but_not_unknown(self):
+        src = "profile x {\n  /usr/bin/foo CUx,\n}\n"
+        codes = _codes(src)
+        assert "dangerous-exec" in codes
+        assert "unknown-keyword" not in codes
