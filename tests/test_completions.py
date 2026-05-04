@@ -6,13 +6,11 @@ Run with: pytest tests/test_completions.py -v
 from __future__ import annotations
 
 import pytest
-from lsprotocol.types import Position
-
 from apparmor_language_server.completions import get_completions
 from apparmor_language_server.parser import VariableDefNode
+from lsprotocol.types import Position
 
 from conftest import make_doc, make_var
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -144,6 +142,24 @@ class TestVariableCompletions:
         result = _complete("  @{HO", None, variables=variables)
         labels = {item.label for item in result.items}
         assert "@{HOME}" in labels
+
+    def test_variable_completion_triggered_by_at_sign(self):
+        """Typing @ on a new line should offer variable completions with correct insert text."""
+        variables = {"@{HOME}": make_var("@{HOME}", ["/home/*/"])}
+        result = _complete("  @", None, variables=variables)
+        labels = {item.label for item in result.items}
+        assert "@{HOME}" in labels
+        home_item = next(item for item in result.items if item.label == "@{HOME}")
+        assert home_item.insert_text == "{HOME}"
+
+    def test_variable_completion_with_digit_in_name(self):
+        """Variable names containing digits should complete correctly including past the digit."""
+        variables = {"@{VAR1}": make_var("@{VAR1}", ["/path/"])}
+        result = _complete("  @{VAR1", None, variables=variables)
+        labels = {item.label for item in result.items}
+        assert "@{VAR1}" in labels
+        var_item = next(item for item in result.items if item.label == "@{VAR1}")
+        assert var_item.insert_text == "}"
 
 
 # ── ABI completions ───────────────────────────────────────────────────────────

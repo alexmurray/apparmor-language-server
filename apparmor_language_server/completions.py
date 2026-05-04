@@ -75,7 +75,7 @@ _RE_AFTER_PATH = re.compile(
     + RE_FILE_PERMISSIONS.pattern
     + "?$"
 )
-_RE_VAR_START = re.compile(r"@\{([A-Za-z_]*)$")
+_RE_VAR_START = re.compile(r"@(\{([A-Za-z][A-Za-z0-9_]*)?)?$")
 _RE_PROFILE_FLAGS = re.compile(r"flags\s*=\s*\(([^)]*)$")
 
 
@@ -101,7 +101,7 @@ def get_completions(
     # ── Variable reference completion ──────────────────────────────────────
     vm = _RE_VAR_START.search(prefix)
     if vm:
-        partial = vm.group(1)
+        partial = vm.group(0)
         logger.debug(f"Variable completion triggered with partial: '{partial}'")
         items = _complete_variables(partial, doc)
         return CompletionList(is_incomplete=False, items=items)
@@ -526,15 +526,16 @@ def _complete_variables(partial: str, doc: DocumentNode) -> list[CompletionItem]
     items: list[CompletionItem] = []
     for uri, vars in doc.all_variables.items():
         for name, var in vars.items():
-            inner = name[2:-1]  # HOME
             desc = f"Variable defined in {Path(uri).name} at line {var.range.start.line + 1}"
-            if not partial or inner.lower().startswith(partial.lower()):
+            if not partial or name.startswith(partial):
                 items.append(
                     CompletionItem(
                         label=name,
                         kind=CompletionItemKind.Variable,
                         detail=desc,
-                        insert_text=inner + "}",  # cursor was after @{
+                        insert_text=name[
+                            len(partial) :
+                        ],  # only insert the remaining part
                         documentation=MarkupContent(
                             kind=MarkupKind.Markdown,
                             value=f"**`{name}`**\n\n{desc}",
