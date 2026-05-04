@@ -12,6 +12,7 @@ can appear inside any rule type.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
 
@@ -74,6 +75,8 @@ from .parser import (
     UsernsRuleNode,
 )
 
+logger = logging.getLogger(__name__)
+
 _RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _RE_VAR = re.compile(r"@\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -104,6 +107,11 @@ def get_hover(
                     return _make_hover(body, m.start(), m.end())
 
     node = _node_at_position(doc, position.line)
+    logger.debug(
+        "Hover node at line %d: %s",
+        position.line,
+        type(node).__name__ if node is not None else None,
+    )
     if node is None:
         return None
     return _hover_for_node(node, line_text, ch)

@@ -608,6 +608,7 @@ class Parser:
         path = m.group(1) if m else ""
         angle = "<" in raw and ">" in raw
         self._advance()
+        logger.debug("ABINode: path=%s (line %d)", path, ln)
         return ABINode(
             range=self._make_range(ln, ln),
             raw=raw,
@@ -622,6 +623,7 @@ class Parser:
         cond = m.re == RE_INCLUDE_IF if m else False
         angle = "<" in raw and ">" in raw
         self._advance()
+        logger.debug("IncludeNode: path=%s conditional=%s (line %d)", path, cond, ln)
         return IncludeNode(
             range=self._make_range(ln, ln),
             raw=raw,
@@ -639,6 +641,7 @@ class Parser:
         augmented = "+=" in raw
         comments = self._comments
         self._comments = list[CommentNode]()  # clear comments after consuming
+        logger.debug("VariableDefNode: name=%s (line %d)", name, ln)
         return VariableDefNode(
             range=self._make_range(ln, ln),
             raw=raw,
@@ -654,6 +657,12 @@ class Parser:
         self._advance()
         comments = self._comments
         self._comments = list[CommentNode]()  # clear comments after consuming
+        logger.debug(
+            "AliasNode: %s -> %s (line %d)",
+            m.group(1) if m else "",
+            m.group(2) if m else "",
+            ln,
+        )
         return AliasNode(
             range=self._make_range(ln, ln),
             raw=raw,
@@ -697,6 +706,7 @@ class Parser:
             inner_text = raw_start[brace_open + 1 : brace_close].strip()
             children = self._parse_inline_rules(inner_text, start_line)
             self._advance()
+            logger.debug("ProfileNode: %s (line %d)", name or "(anonymous)", start_line)
             return ProfileNode(
                 range=self._make_range(start_line, start_line),
                 raw=raw_start,
@@ -719,6 +729,9 @@ class Parser:
             if stripped == "}":
                 end_line = self._pos
                 self._advance()
+                logger.debug(
+                    "ProfileNode: %s (line %d)", name or "(anonymous)", start_line
+                )
                 return ProfileNode(
                     range=self._make_range(start_line, end_line),
                     raw=raw_start,
@@ -735,6 +748,9 @@ class Parser:
                 # _parse_node saw '}' — consume it
                 end_line = self._pos
                 self._advance()
+                logger.debug(
+                    "ProfileNode: %s (line %d)", name or "(anonymous)", start_line
+                )
                 return ProfileNode(
                     range=self._make_range(start_line, end_line),
                     raw=raw_start,
@@ -751,6 +767,7 @@ class Parser:
         self.errors.append(
             ParseError(f"Profile '{name}' not closed before EOF", self._uri, start_line)
         )
+        logger.debug("ProfileNode: %s (line %d)", name or "(anonymous)", start_line)
         return ProfileNode(
             range=self._make_range(start_line, self._pos - 1),
             raw=raw_start,
@@ -800,6 +817,7 @@ class Parser:
                 break
 
         if not raw_lines:
+            logger.debug("UnknownRuleNode: (empty) (line %d)", start_line)
             return UnknownRuleNode(
                 range=self._make_range(start_line, start_line),
                 raw="",
@@ -821,6 +839,7 @@ class Parser:
                 caps = [c.strip() for c in caps_raw.split(",") if c.strip()]
             else:
                 caps = caps_raw.split()
+            logger.debug("CapabilityNode: %s (line %d)", caps, start_line)
             return CapabilityNode(
                 range=self._make_range(start_line, end_line),
                 raw=raw,
@@ -831,6 +850,9 @@ class Parser:
         # -- Network --
         mn = RE_NETWORK.match(joined)
         if mn:
+            logger.debug(
+                "NetworkNode: %s (line %d)", mn.group("rest").strip(), start_line
+            )
             return NetworkNode(
                 range=self._make_range(start_line, end_line),
                 raw=raw,
@@ -842,6 +864,12 @@ class Parser:
         ms = RE_SIGNAL.match(joined)
         if ms:
             perms, sig_set, peer = _parse_signal_rest(ms.group("rest"))
+            logger.debug(
+                "SignalRuleNode: perms=%s signals=%s (line %d)",
+                perms,
+                sig_set,
+                start_line,
+            )
             return SignalRuleNode(
                 range=self._make_range(start_line, end_line),
                 raw=raw,
@@ -863,7 +891,10 @@ class Parser:
             path_raw = mf.group("path")
             path = path_raw[1:-1] if path_raw.startswith('"') else path_raw
             logger.debug(
-                f"Creating FileRuleNode with qualifiers: {quals}, path: {path}, perms: {mf.group('perms')}"
+                "FileRuleNode: path=%s perms=%s (line %d)",
+                path,
+                mf.group("perms"),
+                start_line,
             )
             return FileRuleNode(
                 range=self._make_range(start_line, end_line),
@@ -891,6 +922,7 @@ class Parser:
 
         # "set rlimit" is a two-word keyword; detect by first two tokens.
         if keyword == "set" and content.startswith("rlimit"):
+            logger.debug("RlimitRuleNode: %s (line %d)", content, start_line)
             return RlimitRuleNode(range=rng, raw=raw, qualifiers=quals, content=content)
 
         node_class = _KEYWORD_TO_NODE_CLASS.get(keyword)
@@ -901,6 +933,12 @@ class Parser:
                 parts = rest.split("->")
                 link_path = parts[0].strip() if parts else ""
                 target_path = parts[1].strip().rstrip(",") if len(parts) > 1 else ""
+                logger.debug(
+                    "LinkRuleNode: %s -> %s (line %d)",
+                    link_path,
+                    target_path,
+                    start_line,
+                )
                 return LinkRuleNode(
                     range=rng,
                     raw=raw,
@@ -910,9 +948,12 @@ class Parser:
                     target=target_path,
                 )
             if node_class is AllRuleNode:
+                logger.debug("AllRuleNode (line %d)", start_line)
                 return AllRuleNode(range=rng, raw=raw, qualifiers=quals)
+            logger.debug("%s: %s (line %d)", node_class.__name__, keyword, start_line)
             return node_class(range=rng, raw=raw, qualifiers=quals, content=content)
 
+        logger.debug("UnknownRuleNode: keyword=%s (line %d)", keyword, start_line)
         return UnknownRuleNode(
             range=rng, raw=raw, qualifiers=quals, keyword=keyword, content=content
         )

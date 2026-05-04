@@ -254,6 +254,7 @@ def did_open(ls: AppArmorLanguageServer, params: DidOpenTextDocumentParams):
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)
 def did_change(ls: AppArmorLanguageServer, params: DidChangeTextDocumentParams):
     uri = params.text_document.uri
+    logger.debug("Changed: %s", uri)
     text = params.content_changes[-1].text
     ls._publish_diagnostics(uri, text)
 
@@ -261,12 +262,14 @@ def did_change(ls: AppArmorLanguageServer, params: DidChangeTextDocumentParams):
 @server.feature(TEXT_DOCUMENT_DID_SAVE)
 def did_save(ls: AppArmorLanguageServer, params: DidSaveTextDocumentParams):
     uri = params.text_document.uri
+    logger.debug("Saved: %s", uri)
     text = ls.get_text(uri) or ""
     ls._publish_diagnostics(uri, text)
 
 
 @server.feature(TEXT_DOCUMENT_DID_CLOSE)
 def did_close(ls: AppArmorLanguageServer, params: DidCloseTextDocumentParams):
+    logger.debug("Closed: %s", params.text_document.uri)
     ls.evict(params.text_document.uri)
 
 
@@ -278,6 +281,7 @@ def initialized(ls: AppArmorLanguageServer, params: InitializedParams) -> None:
         if uri.startswith("file://")
     ]
     valid = [p for p in paths if p.is_dir()]
+    logger.info("Initialized; indexing %d workspace folder(s)", len(valid))
     if not valid:
         return
     ls._indexer = WorkspaceIndexer(ls)
@@ -288,6 +292,11 @@ def initialized(ls: AppArmorLanguageServer, params: InitializedParams) -> None:
 def workspace_did_change_folders(
     ls: AppArmorLanguageServer, params: DidChangeWorkspaceFoldersParams
 ) -> None:
+    logger.debug(
+        "Workspace folders changed: %d added, %d removed",
+        len(params.event.added),
+        len(params.event.removed),
+    )
     if ls._indexer is None:
         return
     for folder in params.event.removed:
@@ -304,6 +313,11 @@ def did_change_configuration(
         old = ls._settings
         ls._settings = Settings.from_raw(params.settings)
         new = ls._settings
+    logger.debug(
+        "Configuration changed: diagnostics_enable=%s include_search_paths=%s",
+        new.diagnostics_enable,
+        new.include_search_paths,
+    )
     if old != new and not ls._indexing:
         ls._republish_all_diagnostics()
 
@@ -322,10 +336,16 @@ def completions(ls: AppArmorLanguageServer, params: CompletionParams) -> Complet
         return CompletionList(is_incomplete=False, items=[])
     uri = params.text_document.uri
     position = params.position
+    logger.debug("Completions: %s line %d", uri, position.line)
     text = ls.get_text(uri) or str("")
     lines = text.splitlines()
 
     if position.line >= len(lines):
+        logger.debug(
+            "Position line %d out of range (document has %d lines)",
+            position.line,
+            len(lines),
+        )
         return CompletionList(is_incomplete=False, items=[])
 
     line_text = lines[position.line]
@@ -334,6 +354,12 @@ def completions(ls: AppArmorLanguageServer, params: CompletionParams) -> Complet
         cached = ls.parse_and_cache(uri, text)
 
     doc, _ = cached
+    logger.debug(
+        "Generating completions for doc with %d profiles, %d includes and %d variables",
+        len(doc.profiles),
+        len(doc.includes),
+        sum(len(vars) for vars in doc.all_variables.values()),
+    )
     return get_completions(doc, line_text, position, uri)
 
 
@@ -346,6 +372,7 @@ def hover(ls: AppArmorLanguageServer, params) -> Optional[Hover]:
         return None
     uri = params.text_document.uri
     position = params.position
+    logger.debug("Hover: %s line %d char %d", uri, position.line, position.character)
     text = ls.get_text(uri) or ""
     lines = text.splitlines()
 
@@ -386,6 +413,9 @@ def definition(
         return None
     uri = params.text_document.uri
     position = params.position
+    logger.debug(
+        "Definition: %s line %d char %d", uri, position.line, position.character
+    )
     text = ls.get_text(uri) or ""
     lines = text.splitlines()
 
@@ -478,6 +508,9 @@ def references(
         return None
     uri = params.text_document.uri
     position = params.position
+    logger.debug(
+        "References: %s line %d char %d", uri, position.line, position.character
+    )
     text = ls.get_text(uri) or ""
     lines = text.splitlines()
 

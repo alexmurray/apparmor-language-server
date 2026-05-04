@@ -18,6 +18,7 @@ Checks performed
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Optional
@@ -73,6 +74,8 @@ from .parser import (
     resolve_include_path,
 )
 
+logger = logging.getLogger(__name__)
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 # Dangerous unconfined exec permissions
@@ -113,6 +116,7 @@ def get_diagnostics(
     search_dirs: Optional[list[Path]] = None,
 ) -> dict[str, list[Diagnostic]]:
     diags: dict[str, list[Diagnostic]] = {}
+    logger.debug("Running diagnostics for %s", doc.uri)
 
     # Convert parser errors first
     for err in parse_errors:
@@ -137,6 +141,13 @@ def get_diagnostics(
     for node in doc.children:
         _check_node(node, diags, defined_vars, doc.uri, search_dirs)
 
+    total = sum(len(v) for v in diags.values())
+    logger.debug(
+        "Diagnostics complete for %s: %d issue(s) across %d file(s)",
+        doc.uri,
+        total,
+        len(diags),
+    )
     return diags
 
 
