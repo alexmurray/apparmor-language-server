@@ -540,6 +540,29 @@ class TestReferencesHandler:
         # Exactly two standalone occurrences: change-profile target + profile declaration
         assert len(result) == 2
 
+    def test_variable_references_returned(self):
+        # @{MY_VAR} starts with '@' and ends with '}', both non-word characters,
+        # so \b-based patterns never match it.  The handler must find all three
+        # occurrences: the variable definition and both uses in rules.
+        src = (
+            "@{MY_VAR} = /foo /bar\n"
+            "profile test {\n"
+            "  @{MY_VAR}/baz r,\n"
+            "  owner @{MY_VAR}/** rw,\n"
+            "}\n"
+        )
+        ls = _ls(src)
+        # cursor inside @{MY_VAR} on line 2 ("  @{MY_VAR}/baz r,")
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=2, character=5),
+        )
+        result = references(ls, params)
+        assert result is not None
+        assert len(result) == 3
+        result_lines = {loc.range.start.line for loc in result}
+        assert result_lines == {0, 2, 3}
+
     def test_uncached_document_not_searched(self):
         # A document that was never added to the cache must not contribute results.
         ls = _ls("profile unique_word /bin/x { }\n")

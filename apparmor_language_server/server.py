@@ -350,7 +350,7 @@ def references(
         return None
 
     results: list[Location] = []
-    pattern = re.compile(rf"\b{re.escape(word)}\b")
+    pattern = re.compile(re.escape(word))
 
     for doc_uri in ls._doc_cache:
         doc_text = ls.get_text(doc_uri) or ""
