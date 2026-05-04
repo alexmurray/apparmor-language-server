@@ -563,6 +563,43 @@ class TestReferencesHandler:
         result_lines = {loc.range.start.line for loc in result}
         assert result_lines == {0, 2, 3}
 
+    def test_full_line_comment_excluded(self):
+        # @{HOME} inside a full-line comment must not be returned as a reference.
+        src = (
+            "profile test {\n"
+            "  # allow access to @{HOME} directory\n"
+            "  @{HOME}/.config r,\n"
+            "}\n"
+        )
+        ls = _ls(src)
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=2, character=3),
+        )
+        result = references(ls, params)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].range.start.line == 2
+
+    def test_trailing_inline_comment_excluded(self):
+        # @{HOME} after a mid-line # must not be returned as a reference.
+        src = (
+            "profile test {\n"
+            "  @{HOME}/.config r,  # also covers @{HOME}/.local\n"
+            "  @{HOME}/.local r,\n"
+            "}\n"
+        )
+        ls = _ls(src)
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=1, character=3),
+        )
+        result = references(ls, params)
+        assert result is not None
+        assert len(result) == 2
+        result_lines = {loc.range.start.line for loc in result}
+        assert result_lines == {1, 2}
+
     def test_uncached_document_not_searched(self):
         # A document that was never added to the cache must not contribute results.
         ls = _ls("profile unique_word /bin/x { }\n")

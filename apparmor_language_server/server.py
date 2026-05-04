@@ -355,8 +355,12 @@ def references(
     for doc_uri in ls._doc_cache:
         doc_text = ls.get_text(doc_uri) or ""
         for line_no, doc_line in enumerate(doc_text.splitlines()):
+            code_end = _code_end(doc_line)
             for m in pattern.finditer(doc_line):
-                if _word_at_position(doc_line, m.start()) == word:
+                if (
+                    m.start() < code_end
+                    and _word_at_position(doc_line, m.start()) == word
+                ):
                     results.append(
                         Location(
                             uri=doc_uri,
@@ -572,6 +576,15 @@ def range_formatting(
 
 _RE_VARIABLE = re.compile(r"@{[A-Za-z0-9_]+}")
 _RE_WORD = re.compile(r"[A-Za-z_/][A-Za-z0-9_/.-]*")
+_RE_DIRECTIVE_LINE = re.compile(r"^\s*#(include|abi)\b")
+
+
+def _code_end(line: str) -> int:
+    """Return the index at which a comment begins on *line*, or len(line)."""
+    if _RE_DIRECTIVE_LINE.match(line):
+        return len(line)
+    idx = line.find("#")
+    return idx if idx >= 0 else len(line)
 
 
 def _word_at_position(line: str, ch: int) -> str:
