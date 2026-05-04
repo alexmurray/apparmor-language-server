@@ -342,11 +342,8 @@ def references(
         return None
 
     line_text = lines[position.line]
-    cached = ls.get_cached(uri)
-    if cached is None:
-        cached = ls.parse_and_cache(uri, text)
-
-    _, _ = cached
+    if ls.get_cached(uri) is None:
+        ls.parse_and_cache(uri, text)
 
     word = _word_at_position(line_text, position.character)
     if not word:
@@ -355,17 +352,19 @@ def references(
     results: list[Location] = []
     pattern = re.compile(rf"\b{re.escape(word)}\b")
 
-    for line_no, line in enumerate(lines):
-        for m in pattern.finditer(line):
-            results.append(
-                Location(
-                    uri=uri,
-                    range=Range(
-                        start=Position(line_no, m.start()),
-                        end=Position(line_no, m.end()),
-                    ),
+    for doc_uri in ls._doc_cache:
+        doc_text = ls.get_text(doc_uri) or ""
+        for line_no, doc_line in enumerate(doc_text.splitlines()):
+            for m in pattern.finditer(doc_line):
+                results.append(
+                    Location(
+                        uri=doc_uri,
+                        range=Range(
+                            start=Position(line_no, m.start()),
+                            end=Position(line_no, m.end()),
+                        ),
+                    )
                 )
-            )
 
     return results
 

@@ -68,28 +68,31 @@ class MockLS:
     """Minimal server stub that satisfies the handler interface without pygls."""
 
     def __init__(self, text: str = "", uri: str = URI):
-        self._uri = uri
-        self._text = text
         self._doc_cache: dict = {}
+        self._texts: dict[str, str] = {}
+        if text:
+            self._texts[uri] = text
 
     def get_text(self, uri: str) -> str:
-        return self._text
+        return self._texts.get(uri, "")
 
     def get_cached(self, uri: str):
         return self._doc_cache.get(uri)
 
     def parse_and_cache(self, uri: str, text: str):
+        self._texts[uri] = text
         result = parse_document(uri, text)
         self._doc_cache[uri] = result
         return result
 
     def evict(self, uri: str) -> None:
         self._doc_cache.pop(uri, None)
+        self._texts.pop(uri, None)
 
 
 def _ls(text: str = SIMPLE_PROFILE) -> MockLS:
     """Return a MockLS pre-loaded with *text*."""
-    ls = MockLS(text=text, uri=URI)
+    ls = MockLS()
     ls.parse_and_cache(URI, text)
     return ls
 
@@ -471,6 +474,52 @@ class TestReferencesHandler:
         lines = {loc.range.start.line for loc in result}
         assert 0 in lines
         assert 1 in lines
+
+    def test_finds_references_across_cached_documents(self):
+        uri2 = "file:///other.aa"
+        src1 = "profile foo /usr/bin/foo { }\n"
+        src2 = "profile bar /usr/bin/bar {\n  capability foo,\n}\n"
+        ls = MockLS()
+        ls.parse_and_cache(URI, src1)
+        ls.parse_and_cache(uri2, src2)
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=9),
+        )
+        result = references(ls, params)
+        assert result is not None
+        result_uris = {loc.uri for loc in result}
+        assert URI in result_uris
+        assert uri2 in result_uris
+
+    def test_cross_document_total_count(self):
+        uri2 = "file:///other.aa"
+        # URI: "foo" appears twice (profile name + attachment path)
+        # uri2: "foo" appears once (capability rule)
+        src1 = "profile foo /usr/bin/foo { }\n"
+        src2 = "profile bar /usr/bin/bar {\n  capability foo,\n}\n"
+        ls = MockLS()
+        ls.parse_and_cache(URI, src1)
+        ls.parse_and_cache(uri2, src2)
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=9),
+        )
+        result = references(ls, params)
+        assert result is not None
+        assert len(result) == 3
+
+    def test_uncached_document_not_searched(self):
+        # A document that was never added to the cache must not contribute results.
+        ls = _ls("profile unique_word /bin/x { }\n")
+        # Do NOT cache a second doc that also contains unique_word.
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=9),
+        )
+        result = references(ls, params)
+        result_uris = {loc.uri for loc in result}
+        assert result_uris == {URI}
 
 
 # ── highlight handler ─────────────────────────────────────────────────────────
