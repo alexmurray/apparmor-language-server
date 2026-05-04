@@ -25,6 +25,7 @@ from lsprotocol.types import (
 
 from apparmor_language_server.parser import (
     CapabilityNode,
+    DocumentNode,
     FileRuleNode,
     IncludeNode,
     NetworkNode,
@@ -170,6 +171,73 @@ class TestAppArmorLanguageServerCache:
     def test_no_errors_for_valid_profile(self, server):
         _, errors = server.parse_and_cache(URI, SIMPLE_PROFILE)
         assert errors == []
+
+
+# ── parse_and_cache include caching ──────────────────────────────────────────
+
+
+class TestParseAndCacheIncludedDocs:
+    @pytest.fixture
+    def server(self):
+        return AppArmorLanguageServer()
+
+    def test_included_file_added_to_cache(self, server, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("@{MY_VAR} = /foo\n")
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        server.parse_and_cache(
+            parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n'
+        )
+        assert server.get_cached(inc_file.as_uri()) is not None
+
+    def test_included_file_cache_entry_has_doc_and_errors(self, server, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("@{MY_VAR} = /foo\n")
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        server.parse_and_cache(
+            parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n'
+        )
+        doc, errors = server.get_cached(inc_file.as_uri())
+        assert "@{MY_VAR}" in doc.variables
+        assert isinstance(errors, list)
+
+    def test_unresolvable_include_not_added_to_cache(self, server):
+        server.parse_and_cache(URI, "include <no-such-file>\nprofile x { }\n")
+        assert set(server._doc_cache) == {URI}
+
+    def test_already_cached_uri_not_overwritten(self, server, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("@{MY_VAR} = /foo\n")
+        inc_uri = inc_file.as_uri()
+        sentinel = (DocumentNode(uri=inc_uri), [])
+        server._doc_cache[inc_uri] = sentinel
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        server.parse_and_cache(
+            parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n'
+        )
+        assert server.get_cached(inc_uri) is sentinel
+
+    def test_transitive_includes_added_to_cache(self, server, tmp_path):
+        deep_file = tmp_path / "deep"
+        deep_file.write_text("@{DEEP} = /deep\n")
+        mid_file = tmp_path / "middle"
+        mid_file.write_text(f'include "{deep_file.name}"\n')
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        server.parse_and_cache(
+            parent_uri, f'include "{mid_file.name}"\nprofile x {{ }}\n'
+        )
+        assert server.get_cached(mid_file.as_uri()) is not None
+        assert server.get_cached(deep_file.as_uri()) is not None
+
+    def test_included_file_errors_stored_in_cache(self, server, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("profile broken {\n")  # missing closing brace
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        server.parse_and_cache(
+            parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n'
+        )
+        _, errors = server.get_cached(inc_file.as_uri())
+        assert len(errors) > 0
 
 
 # ── _profile_to_symbol ────────────────────────────────────────────────────────

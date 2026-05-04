@@ -18,6 +18,7 @@ from apparmor_language_server.parser import (
     LinkRuleNode,
     MqueueRuleNode,
     NetworkNode,
+    Parser,
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
@@ -819,5 +820,81 @@ class TestNewRuleTypes:
         src = "profile x {\n  remount /mnt,\n}\n"
         doc, errors = parse_document("file:///test.aa", src)
         assert len(errors) == 0
-        remount_rules = [c for c in doc.profiles[0].children if isinstance(c, RemountRuleNode)]
+        remount_rules = [
+            c for c in doc.profiles[0].children if isinstance(c, RemountRuleNode)
+        ]
         assert len(remount_rules) == 1
+
+
+# ── Parser.included_docs ──────────────────────────────────────────────────────
+
+
+class TestParserIncludedDocs:
+    def test_empty_when_no_includes(self):
+        p = Parser("file:///test.aa", "profile x { }\n")
+        p.parse()
+        assert p.included_docs == {}
+
+    def test_empty_when_include_not_found(self):
+        p = Parser("file:///test.aa", "include <no-such-file>\nprofile x { }\n")
+        p.parse()
+        assert p.included_docs == {}
+
+    def test_populated_when_include_found(self, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("@{MY_VAR} = /foo\n")
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n')
+        p.parse()
+        assert inc_file.as_uri() in p.included_docs
+
+    def test_included_doc_uri_uses_file_scheme(self, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("@{MY_VAR} = /foo\n")
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n')
+        p.parse()
+        for uri in p.included_docs:
+            assert uri.startswith("file://"), f"expected file:// URI, got {uri!r}"
+
+    def test_included_doc_node_has_variables(self, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("@{MY_VAR} = /foo\n")
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n')
+        p.parse()
+        doc, _ = p.included_docs[inc_file.as_uri()]
+        assert "@{MY_VAR}" in doc.variables
+
+    def test_included_doc_errors_captured(self, tmp_path):
+        inc_file = tmp_path / "myinc"
+        inc_file.write_text("profile broken {\n")  # missing closing brace → ParseError
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(parent_uri, f'include "{inc_file.name}"\nprofile x {{ }}\n')
+        p.parse()
+        _, errors = p.included_docs[inc_file.as_uri()]
+        assert len(errors) > 0
+
+    def test_transitive_includes_collected(self, tmp_path):
+        deep_file = tmp_path / "deep"
+        deep_file.write_text("@{DEEP} = /deep\n")
+        mid_file = tmp_path / "middle"
+        mid_file.write_text(f'include "{deep_file.name}"\n')
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(parent_uri, f'include "{mid_file.name}"\nprofile x {{ }}\n')
+        p.parse()
+        assert mid_file.as_uri() in p.included_docs
+        assert deep_file.as_uri() in p.included_docs
+
+    def test_directory_include_adds_all_files(self, tmp_path):
+        # Use a name that won't shadow any real /etc/apparmor.d/ subdirectory.
+        inc_dir = tmp_path / "test-lsp-inc-dir"
+        inc_dir.mkdir()
+        (inc_dir / "base").write_text("@{BASE} = /base\n")
+        (inc_dir / "net").write_text("@{NET} = /net\n")
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(parent_uri, f'include "{inc_dir.name}"\nprofile x {{ }}\n')
+        p.parse()
+        uris = set(p.included_docs)
+        assert (inc_dir / "base").as_uri() in uris
+        assert (inc_dir / "net").as_uri() in uris

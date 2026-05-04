@@ -417,6 +417,7 @@ class Parser:
         self._pos = 0
         self._comments = list[CommentNode]()
         self.errors: list[ParseError] = []
+        self.included_docs: dict[str, tuple[DocumentNode, list[ParseError]]] = {}
 
     # ── Entry point ───────────────────────────────────────────────────────────
 
@@ -491,8 +492,12 @@ class Parser:
         except NotADirectoryError:
             with open(path, "r") as f:
                 text = f.read()
-            sub_parser = Parser(uri=str(path), text=text)
-            docs.append(sub_parser.parse())
+            uri = path.as_uri()
+            sub_parser = Parser(uri=uri, text=text)
+            doc = sub_parser.parse()
+            docs.append(doc)
+            self.included_docs[uri] = (doc, sub_parser.errors)
+            self.included_docs.update(sub_parser.included_docs)
         return docs
 
     def _parse_include_node(self, include: IncludeNode):

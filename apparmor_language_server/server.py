@@ -80,9 +80,9 @@ from .parser import (
     NetworkNode,
     Node,
     ParseError,
+    Parser,
     ProfileNode,
     VariableDefNode,
-    parse_document,
     resolve_include_path,
 )
 
@@ -114,8 +114,13 @@ class AppArmorLanguageServer(LanguageServer):
     def parse_and_cache(
         self, uri: str, text: str
     ) -> tuple[DocumentNode, list[ParseError]]:
-        result = parse_document(uri, text)
+        p = Parser(uri, text)
+        doc = p.parse()
+        result = (doc, p.errors)
         self._doc_cache[uri] = result
+        for inc_uri, inc_result in p.included_docs.items():
+            if inc_uri not in self._doc_cache:
+                self._doc_cache[inc_uri] = inc_result
         return result
 
     def get_cached(self, uri: str) -> Optional[tuple[DocumentNode, list[ParseError]]]:
