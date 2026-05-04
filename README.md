@@ -20,6 +20,7 @@ server for editing **AppArmor profiles**, written in Python using
 | **Diagnostics / Linting** | Unknown capabilities, invalid network qualifiers, bad file permission chars, dangerous unconfined exec (`ux`/`Ux`), empty profiles, duplicate capabilities, conflicting allow+deny, undefined variables, missing include targets, unclosed profiles, unknown profile flags |
 | **Formatting** | Normalise indentation, remove trailing whitespace, sort capabilities alphabetically, sort parenthesised lists, ensure trailing commas on all rules, normalise `#include` → `include`, collapse multiple blank lines |
 | **Range Formatting** | Format a selected region only |
+| **References** | Find all references to the identifier or variable under the cursor across all open documents (excludes path components and comments) |
 | **Document Highlight** | Highlight all occurrences of the word under the cursor |
 
 ---
@@ -34,7 +35,7 @@ server for editing **AppArmor profiles**, written in Python using
 ### From source
 
 ```bash
-git clone https://github.com/example/apparmor-language-server
+git clone https://github.com/alexmurray/apparmor-language-server
 cd apparmor-language-server
 pip install .
 ```
@@ -113,29 +114,12 @@ vim.filetype.add({
 
 ### VS Code
 
-Install the [generic LSP client](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd)
-or create a `.vscode/settings.json`:
-
-```json
-{
-  "languageserver": {
-    "apparmor": {
-      "command": "apparmor-language-server",
-      "args": [],
-      "filetypes": ["apparmor"]
-    }
-  }
-}
-```
-
-If using the **`vscode-glspc`** or **`georgewfraser.vscode-langserver-node`** extension:
-
-```json
-{
-  "glspc.serverPath": "apparmor-language-server",
-  "glspc.languageId": "apparmor"
-}
-```
+VS Code does not have a built-in generic LSP client. To use
+`apparmor-language-server` you will need to write a small VS Code
+extension that wraps it using the
+[`vscode-languageclient`](https://www.npmjs.com/package/vscode-languageclient)
+npm package, following the
+[VS Code Language Server extension guide](https://code.visualstudio.com/api/language-extensions/language-server-extension-guide).
 
 ### Emacs (with `eglot`)
 
@@ -227,6 +211,7 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `missing-abi` | Warning | ABI target not found on disk |
 | `unknown-signal-permission` | Warning | Invalid permission in `signal` rule |
 | `unknown-signal-name` | Warning | Unknown signal name in `signal set=(…)` |
+| `unknown-ptrace-permission` | Warning | Invalid permission in `ptrace` rule |
 
 ---
 
