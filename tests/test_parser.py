@@ -354,6 +354,58 @@ class TestFileRules:
         assert "r" in deny_rule.perms
 
 
+# ── Quoted-path file rules ────────────────────────────────────────────────────
+
+
+class TestQuotedPathFileRules:
+    def _files(self, src: str) -> list[FileRuleNode]:
+        doc, errors = parse_document("file:///test.aa", src)
+        assert errors == []
+        return [c for c in doc.profiles[0].children if isinstance(c, FileRuleNode)]
+
+    def test_quoted_path_suffix_form(self):
+        files = self._files('profile x {\n  "/opt/a path with a space" r,\n}\n')
+        rule = next((f for f in files if "a path with a space" in f.path), None)
+        assert rule is not None
+        assert rule.path == "/opt/a path with a space"
+        assert "r" in rule.perms
+
+    def test_quoted_path_prefix_form(self):
+        files = self._files('profile x {\n  r "/opt/a path with a space",\n}\n')
+        rule = next((f for f in files if "a path with a space" in f.path), None)
+        assert rule is not None
+        assert rule.path == "/opt/a path with a space"
+        assert "r" in rule.perms
+
+    def test_quoted_path_with_file_keyword(self):
+        files = self._files('profile x {\n  file r "/opt/a path with a space",\n}\n')
+        rule = next((f for f in files if "a path with a space" in f.path), None)
+        assert rule is not None
+        assert rule.path == "/opt/a path with a space"
+        assert "r" in rule.perms
+
+    def test_quoted_path_with_qualifier(self):
+        files = self._files('profile x {\n  owner "/opt/a path with a space" rw,\n}\n')
+        rule = next((f for f in files if "a path with a space" in f.path), None)
+        assert rule is not None
+        assert rule.path == "/opt/a path with a space"
+        assert "owner" in rule.qualifiers
+        assert "rw" in rule.perms
+
+    def test_quoted_path_with_glob(self):
+        files = self._files('profile x {\n  "/opt/my app/**" r,\n}\n')
+        rule = next((f for f in files if "my app" in f.path), None)
+        assert rule is not None
+        assert rule.path == "/opt/my app/**"
+        assert "r" in rule.perms
+
+    def test_quoted_path_stores_unquoted(self):
+        files = self._files('profile x {\n  "/opt/a path" r,\n}\n')
+        rule = files[0]
+        assert not rule.path.startswith('"')
+        assert not rule.path.endswith('"')
+
+
 # ── Capability rules ──────────────────────────────────────────────────────────
 
 

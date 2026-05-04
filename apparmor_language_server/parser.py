@@ -66,12 +66,13 @@ _RE_SIGNAL_PEER = re.compile(r"\bpeer=(\S+)")
 _RE_FILE_QUALIFIERS = re.compile(
     r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS + ["owner"]) + r")\s+)*)?"
 )
+_RE_FILE_PATH = r'"[^"]*"|[@/]\S+'
 RE_FILE_PREFIX = re.compile(
     _RE_FILE_QUALIFIERS.pattern
     + (
         r"(?:file\s+)?"
         r"(?P<perms>" + RE_FILE_PERMISSIONS.pattern + r")\s+"
-        r"(?P<path>[@/][^\s]+)"
+        r"(?P<path>" + _RE_FILE_PATH + r")"
         r"(?:\s*->\s*(?P<link_target>\S+))?"
         r"\s*,\s*$"
     )
@@ -80,7 +81,7 @@ RE_FILE_SUFFIX = re.compile(
     _RE_FILE_QUALIFIERS.pattern
     + (
         r"(?:file\s+)?"
-        r"(?P<path>[@/][^\s]+)\s+"
+        r"(?P<path>" + _RE_FILE_PATH + r")\s+"
         r"(?P<perms>" + RE_FILE_PERMISSIONS.pattern + r")"
         r"(?:\s*->\s*(?P<link_target>\S+))?"
         r"\s*,\s*$"
@@ -848,14 +849,16 @@ class Parser:
         if mf:
             quals_str = str(mf.group("quals") or "")
             quals = quals_str.split()
+            path_raw = mf.group("path")
+            path = path_raw[1:-1] if path_raw.startswith('"') else path_raw
             logger.debug(
-                f"Creating FileRuleNode with qualifiers: {quals}, path: {mf.group('path')}, perms: {mf.group('perms')}"
+                f"Creating FileRuleNode with qualifiers: {quals}, path: {path}, perms: {mf.group('perms')}"
             )
             return FileRuleNode(
                 range=self._make_range(start_line, end_line),
                 raw=raw,
                 qualifiers=quals,
-                path=mf.group("path"),
+                path=path,
                 perms=mf.group("perms"),
                 link_target=mf.group("link_target"),
             )
