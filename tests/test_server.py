@@ -5,10 +5,13 @@ Run with: pytest tests/test_server.py -v
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from lsprotocol.types import (
     CompletionParams,
     DefinitionParams,
+    DidChangeConfigurationParams,
     DidCloseTextDocumentParams,
     DocumentFormattingParams,
     DocumentHighlightKind,
@@ -33,11 +36,13 @@ from apparmor_language_server.parser import (
 )
 from apparmor_language_server.server import (
     AppArmorLanguageServer,
+    Settings,
     _node_to_symbol,
     _profile_to_symbol,
     _word_at_position,
     completions,
     definition,
+    did_change_configuration,
     did_close,
     document_symbols,
     formatting,
@@ -71,8 +76,14 @@ class MockLS:
     def __init__(self, text: str = "", uri: str = URI):
         self._doc_cache: dict = {}
         self._texts: dict[str, str] = {}
+        self._cache_lock = threading.RLock()
+        self._settings_lock = threading.Lock()
+        self._indexing = False
         if text:
             self._texts[uri] = text
+
+    def _get_search_dirs(self):
+        return None
 
     def get_text(self, uri: str) -> str:
         return self._texts.get(uri, "")
@@ -893,3 +904,202 @@ class TestRangeFormattingHandler:
         )
         result = range_formatting(ls, params)
         assert isinstance(result, list)
+
+
+# ── indexing guard ────────────────────────────────────────────────────────────
+
+
+class TestIndexingGuard:
+    """Each result-returning handler returns an empty/None result while indexing."""
+
+    def _indexing_ls(self) -> MockLS:
+        ls = _ls()
+        ls._indexing = True
+        return ls
+
+    def test_completions_returns_empty_list(self):
+        ls = self._indexing_ls()
+        params = CompletionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=0),
+        )
+        result = completions(ls, params)
+        assert result.items == []
+
+    def test_hover_returns_none(self):
+        ls = self._indexing_ls()
+        result = hover(ls, _HoverParams(URI, 0, 0))
+        assert result is None
+
+    def test_definition_returns_none(self):
+        ls = self._indexing_ls()
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=0),
+        )
+        result = definition(ls, params)
+        assert result is None
+
+    def test_references_returns_none(self):
+        ls = self._indexing_ls()
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=0),
+        )
+        result = references(ls, params)
+        assert result is None
+
+    def test_highlight_returns_empty_list(self):
+        ls = self._indexing_ls()
+        params = DocumentHighlightParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=0, character=0),
+        )
+        result = highlight(ls, params)
+        assert result == []
+
+    def test_document_symbols_returns_empty_list(self):
+        ls = self._indexing_ls()
+        params = DocumentSymbolParams(text_document=TextDocumentIdentifier(uri=URI))
+        result = document_symbols(ls, params)
+        assert result == []
+
+    def test_workspace_symbols_returns_empty_list(self):
+        ls = self._indexing_ls()
+        result = workspace_symbols(ls, WorkspaceSymbolParams(query=""))
+        assert result == []
+
+    def test_formatting_returns_empty_list(self):
+        ls = self._indexing_ls()
+        params = DocumentFormattingParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            options=FormattingOptions(tab_size=2, insert_spaces=True),
+        )
+        result = formatting(ls, params)
+        assert result == []
+
+    def test_range_formatting_returns_empty_list(self):
+        ls = self._indexing_ls()
+        params = DocumentRangeFormattingParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            range=Range(
+                start=Position(line=0, character=0),
+                end=Position(line=1, character=0),
+            ),
+            options=FormattingOptions(tab_size=2, insert_spaces=True),
+        )
+        result = range_formatting(ls, params)
+        assert result == []
+
+
+# ── Settings.from_raw ─────────────────────────────────────────────────────────
+
+
+class TestSettingsFromRaw:
+    def test_defaults_when_empty_dict(self):
+        s = Settings.from_raw({})
+        assert s.diagnostics_enable is True
+        assert s.include_search_paths == []
+
+    def test_defaults_when_non_dict(self):
+        s = Settings.from_raw(None)
+        assert s.diagnostics_enable is True
+        assert s.include_search_paths == []
+
+    def test_diagnostics_disable(self):
+        s = Settings.from_raw({"apparmor": {"diagnostics": {"enable": False}}})
+        assert s.diagnostics_enable is False
+
+    def test_diagnostics_enable_true(self):
+        s = Settings.from_raw({"apparmor": {"diagnostics": {"enable": True}}})
+        assert s.diagnostics_enable is True
+
+    def test_non_bool_diagnostics_enable_ignored(self):
+        s = Settings.from_raw({"apparmor": {"diagnostics": {"enable": "yes"}}})
+        assert s.diagnostics_enable is True  # default kept
+
+    def test_include_search_paths_set(self):
+        s = Settings.from_raw({"apparmor": {"includeSearchPaths": ["/custom/path"]}})
+        assert s.include_search_paths == ["/custom/path"]
+
+    def test_include_search_paths_filters_non_strings(self):
+        s = Settings.from_raw({"apparmor": {"includeSearchPaths": ["/ok", 42, None]}})
+        assert s.include_search_paths == ["/ok"]
+
+    def test_unknown_keys_ignored(self):
+        s = Settings.from_raw({"apparmor": {"unknownKey": True}, "other": "stuff"})
+        assert s.diagnostics_enable is True
+        assert s.include_search_paths == []
+
+    def test_non_dict_apparmor_section_returns_defaults(self):
+        s = Settings.from_raw({"apparmor": "invalid"})
+        assert s.diagnostics_enable is True
+
+
+# ── did_change_configuration handler ─────────────────────────────────────────
+
+
+class TestDidChangeConfiguration:
+    @pytest.fixture
+    def server(self):
+        return AppArmorLanguageServer()
+
+    def _params(self, raw: object) -> DidChangeConfigurationParams:
+        return DidChangeConfigurationParams(settings=raw)
+
+    def test_updates_diagnostics_enable(self, server):
+        did_change_configuration(
+            server, self._params({"apparmor": {"diagnostics": {"enable": False}}})
+        )
+        assert server._settings.diagnostics_enable is False
+
+    def test_updates_include_search_paths(self, server):
+        did_change_configuration(
+            server, self._params({"apparmor": {"includeSearchPaths": ["/custom"]}})
+        )
+        assert server._settings.include_search_paths == ["/custom"]
+
+    def test_empty_settings_restores_defaults(self, server):
+        server._settings.diagnostics_enable = False
+        did_change_configuration(server, self._params({}))
+        assert server._settings.diagnostics_enable is True
+
+    def test_republish_clears_diagnostics_when_disabled(self, server):
+        server.parse_and_cache(URI, SIMPLE_PROFILE)
+        published: list = []
+        server.text_document_publish_diagnostics = lambda p: published.append(p)
+        did_change_configuration(
+            server, self._params({"apparmor": {"diagnostics": {"enable": False}}})
+        )
+        assert any(p.uri == URI and p.diagnostics == [] for p in published)
+
+    def test_republish_sends_diagnostics_when_enabled(self, server):
+        server._settings.diagnostics_enable = False
+        bad = "profile broken {\n"
+        server.parse_and_cache(URI, bad)
+        published: list = []
+        server.text_document_publish_diagnostics = lambda p: published.append(p)
+        did_change_configuration(
+            server, self._params({"apparmor": {"diagnostics": {"enable": True}}})
+        )
+        uris_published = {p.uri for p in published}
+        assert URI in uris_published
+
+    def test_no_republish_when_settings_unchanged(self, server):
+        server.parse_and_cache(URI, SIMPLE_PROFILE)
+        published: list = []
+        server.text_document_publish_diagnostics = lambda p: published.append(p)
+        did_change_configuration(server, self._params({}))
+        assert published == []
+
+    def test_get_search_dirs_none_when_no_extra_paths(self, server):
+        assert server._get_search_dirs() is None
+
+    def test_get_search_dirs_prepends_extra_paths(self, server, tmp_path):
+        did_change_configuration(
+            server,
+            self._params({"apparmor": {"includeSearchPaths": [str(tmp_path)]}}),
+        )
+        search_dirs = server._get_search_dirs()
+        assert search_dirs is not None
+        assert search_dirs[0] == tmp_path

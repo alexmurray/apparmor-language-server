@@ -13,6 +13,7 @@ requires-python = ">=3.10"
 dependencies = [
   "pygls>=2.1",
   "lsprotocol>=2024.0",
+  "inotify_simple>=2.0",
 ]
 
 [project.optional-dependencies]

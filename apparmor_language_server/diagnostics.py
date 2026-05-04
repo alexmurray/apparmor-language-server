@@ -19,6 +19,7 @@ Checks performed
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 from lsprotocol.types import (
@@ -109,6 +110,7 @@ def _diag(
 def get_diagnostics(
     doc: DocumentNode,
     parse_errors: list[ParseError],
+    search_dirs: Optional[list[Path]] = None,
 ) -> dict[str, list[Diagnostic]]:
     diags: dict[str, list[Diagnostic]] = {}
 
@@ -133,7 +135,7 @@ def get_diagnostics(
         defined_vars.update(set(vars.keys()))
 
     for node in doc.children:
-        _check_node(node, diags, defined_vars, doc.uri)
+        _check_node(node, diags, defined_vars, doc.uri, search_dirs)
 
     return diags
 
@@ -143,9 +145,10 @@ def _check_node(
     diags: dict[str, list[Diagnostic]],
     defined_vars: set[str],
     uri: str,
+    search_dirs: Optional[list[Path]] = None,
 ) -> None:
     if isinstance(node, ProfileNode):
-        _check_profile(node, diags, uri, defined_vars)
+        _check_profile(node, diags, uri, defined_vars, search_dirs)
     elif isinstance(node, CapabilityNode):
         _check_capability(node, diags, uri)
     elif isinstance(node, NetworkNode):
@@ -158,9 +161,9 @@ def _check_node(
     elif isinstance(node, FileRuleNode):
         _check_file_rule(node, diags, uri, defined_vars)
     elif isinstance(node, ABINode):
-        _check_abi(node, diags, uri)
+        _check_abi(node, diags, uri, search_dirs)
     elif isinstance(node, IncludeNode):
-        _check_include(node, diags, uri)
+        _check_include(node, diags, uri, search_dirs)
     elif isinstance(
         node,
         (
@@ -193,6 +196,7 @@ def _check_profile(
     diags: dict[str, list[Diagnostic]],
     uri: str,
     defined_vars: set[str],
+    search_dirs: Optional[list[Path]] = None,
 ) -> None:
     # Invalid flags
     for flag in node.flags:
@@ -258,7 +262,7 @@ def _check_profile(
     for child in node.children:
         if isinstance(child, VariableDefNode):
             local_vars.add(child.name)
-        _check_node(child, diags, local_vars, uri)
+        _check_node(child, diags, local_vars, uri, search_dirs)
 
 
 # ── Capability checks ─────────────────────────────────────────────────────────
@@ -429,8 +433,9 @@ def _check_abi(
     node: ABINode,
     diags: dict[str, list[Diagnostic]],
     uri: str,
+    search_dirs: Optional[list[Path]] = None,
 ) -> None:
-    resolved = resolve_include_path(node.path, uri)
+    resolved = resolve_include_path(node.path, uri, search_dirs)
     if resolved is None:
         diags.setdefault(uri, []).append(
             _diag(
@@ -449,8 +454,9 @@ def _check_include(
     node: IncludeNode,
     diags: dict[str, list[Diagnostic]],
     uri: str,
+    search_dirs: Optional[list[Path]] = None,
 ) -> None:
-    resolved = resolve_include_path(node.path, uri)
+    resolved = resolve_include_path(node.path, uri, search_dirs)
     if resolved is None:
         # only an error if the include is not conditional
         if not node.conditional:

@@ -411,13 +411,19 @@ class Parser:
       • Nested sub-profiles / hats
     """
 
-    def __init__(self, uri: str, text: str):
+    def __init__(
+        self,
+        uri: str,
+        text: str,
+        search_dirs: Optional[list[Path]] = None,
+    ):
         self._uri = uri
         self._lines = text.splitlines()
         self._pos = 0
         self._comments = list[CommentNode]()
         self.errors: list[ParseError] = []
         self.included_docs: dict[str, tuple[DocumentNode, list[ParseError]]] = {}
+        self._search_dirs = search_dirs
 
     # ── Entry point ───────────────────────────────────────────────────────────
 
@@ -493,7 +499,7 @@ class Parser:
             with open(path, "r") as f:
                 text = f.read()
             uri = path.as_uri()
-            sub_parser = Parser(uri=uri, text=text)
+            sub_parser = Parser(uri=uri, text=text, search_dirs=self._search_dirs)
             doc = sub_parser.parse()
             docs.append(doc)
             self.included_docs[uri] = (doc, sub_parser.errors)
@@ -501,7 +507,7 @@ class Parser:
         return docs
 
     def _parse_include_node(self, include: IncludeNode):
-        path = resolve_include_path(include.path, self._uri)
+        path = resolve_include_path(include.path, self._uri, self._search_dirs)
         if path is not None:
             try:
                 include.documents = self._parse_include_path(path)
