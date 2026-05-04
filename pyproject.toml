@@ -19,7 +19,7 @@ dependencies = [
 dev = [
   "pytest",
   "pytest-asyncio",
-  "rassumfrassum",
+  "pytest-cov",
   "ruff",
   "ty",
 ]
