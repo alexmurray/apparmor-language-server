@@ -252,6 +252,9 @@ pip install -e ".[dev]"
 # Run tests
 pytest tests/ -v
 
+# Run tests with coverage, outputting both terminal and JSON reports
+pytest --cov=apparmor_language_server --cov-report=term --cov-report=json
+
 # Lint and format
 ruff check apparmor_language_server/
 ruff format apparmor_language_server/
