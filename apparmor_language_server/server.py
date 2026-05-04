@@ -356,15 +356,16 @@ def references(
         doc_text = ls.get_text(doc_uri) or ""
         for line_no, doc_line in enumerate(doc_text.splitlines()):
             for m in pattern.finditer(doc_line):
-                results.append(
-                    Location(
-                        uri=doc_uri,
-                        range=Range(
-                            start=Position(line_no, m.start()),
-                            end=Position(line_no, m.end()),
-                        ),
+                if _word_at_position(doc_line, m.start()) == word:
+                    results.append(
+                        Location(
+                            uri=doc_uri,
+                            range=Range(
+                                start=Position(line_no, m.start()),
+                                end=Position(line_no, m.end()),
+                            ),
+                        )
                     )
-                )
 
     return results
 

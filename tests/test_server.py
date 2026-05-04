@@ -443,7 +443,8 @@ class TestReferencesHandler:
         assert references(ls, params) is None
 
     def test_returns_all_occurrences(self):
-        # "foo" appears exactly 3 times: "profile foo", "/usr/bin/foo", "capability foo"
+        # "foo" appears as a standalone token twice: "profile foo" and "capability foo".
+        # "/usr/bin/foo" must NOT be counted — it is a path, not a reference to foo.
         src = "profile foo /usr/bin/foo {\n  capability foo,\n}\n"
         ls = _ls(src)
         params = DefinitionParams(
@@ -452,7 +453,7 @@ class TestReferencesHandler:
         )
         result = references(ls, params)
         assert result is not None
-        assert len(result) == 3
+        assert len(result) == 2
 
     def test_no_word_at_position_returns_none(self):
         ls = _ls()
@@ -494,8 +495,8 @@ class TestReferencesHandler:
 
     def test_cross_document_total_count(self):
         uri2 = "file:///other.aa"
-        # URI: "foo" appears twice (profile name + attachment path)
-        # uri2: "foo" appears once (capability rule)
+        # URI: standalone "foo" once (profile name); "/usr/bin/foo" is a path — not counted.
+        # uri2: standalone "foo" once (capability rule).
         src1 = "profile foo /usr/bin/foo { }\n"
         src2 = "profile bar /usr/bin/bar {\n  capability foo,\n}\n"
         ls = MockLS()
@@ -507,7 +508,37 @@ class TestReferencesHandler:
         )
         result = references(ls, params)
         assert result is not None
-        assert len(result) == 3
+        assert len(result) == 2
+
+    def test_path_component_not_treated_as_reference(self):
+        # "mx-extract" appears as a subprofile name, as the target of a change-profile
+        # rule, and as a trailing component of a file path.  Only the two standalone
+        # token occurrences are references; the path component must be excluded.
+        src = (
+            "profile outer /bin/outer {\n"
+            "  file Cx /usr/libexec/rygel/mx-extract -> mx-extract,\n"
+            "  profile mx-extract {\n"
+            "  }\n"
+            "}\n"
+        )
+        ls = _ls(src)
+        # cursor on "mx-extract" in "profile mx-extract {"  (line 2)
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=2, character=12),
+        )
+        result = references(ls, params)
+        assert result is not None
+        lines = src.splitlines()
+        for loc in result:
+            matched = lines[loc.range.start.line][
+                loc.range.start.character : loc.range.end.character
+            ]
+            assert matched == "mx-extract", (
+                f"unexpected match {matched!r} on line {loc.range.start.line}"
+            )
+        # Exactly two standalone occurrences: change-profile target + profile declaration
+        assert len(result) == 2
 
     def test_uncached_document_not_searched(self):
         # A document that was never added to the cache must not contribute results.
