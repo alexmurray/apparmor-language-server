@@ -37,6 +37,7 @@ from apparmor_language_server.parser import (
 from apparmor_language_server.server import (
     AppArmorLanguageServer,
     Settings,
+    _effective_index_path,
     _node_to_symbol,
     _profile_to_symbol,
     _word_at_position,
@@ -1103,3 +1104,50 @@ class TestDidChangeConfiguration:
         search_dirs = server._get_search_dirs()
         assert search_dirs is not None
         assert search_dirs[0] == tmp_path
+
+    def test_profiles_subdir_default(self):
+        s = Settings.from_raw({})
+        assert s.profiles_subdir == "apparmor.d"
+
+    def test_profiles_subdir_custom(self):
+        s = Settings.from_raw({"apparmor": {"profilesSubdir": "profiles/apparmor.d"}})
+        assert s.profiles_subdir == "profiles/apparmor.d"
+
+    def test_profiles_subdir_non_string_ignored(self):
+        s = Settings.from_raw({"apparmor": {"profilesSubdir": 42}})
+        assert s.profiles_subdir == "apparmor.d"
+
+    def test_updates_profiles_subdir(self, server):
+        did_change_configuration(
+            server,
+            self._params({"apparmor": {"profilesSubdir": "my/subdir"}}),
+        )
+        assert server._settings.profiles_subdir == "my/subdir"
+
+
+# ── _effective_index_path ─────────────────────────────────────────────────────
+
+
+class TestEffectiveIndexPath:
+    def test_subdir_exists(self, tmp_path):
+        subdir = tmp_path / "apparmor.d"
+        subdir.mkdir()
+        assert _effective_index_path(tmp_path, "apparmor.d") == subdir
+
+    def test_subdir_missing_returns_none(self, tmp_path):
+        assert _effective_index_path(tmp_path, "apparmor.d") is None
+
+    def test_empty_subdir_uses_workspace_root(self, tmp_path):
+        assert _effective_index_path(tmp_path, "") == tmp_path
+
+    def test_dot_subdir_uses_workspace_root(self, tmp_path):
+        assert _effective_index_path(tmp_path, ".") == tmp_path
+
+    def test_nested_subdir(self, tmp_path):
+        nested = tmp_path / "profiles" / "apparmor.d"
+        nested.mkdir(parents=True)
+        assert _effective_index_path(tmp_path, "profiles/apparmor.d") == nested
+
+    def test_workspace_root_missing_returns_none(self, tmp_path):
+        missing = tmp_path / "nonexistent"
+        assert _effective_index_path(missing, "") is None

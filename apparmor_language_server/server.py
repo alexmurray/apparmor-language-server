@@ -116,6 +116,7 @@ class Settings:
 
     diagnostics_enable: bool = True
     include_search_paths: list[str] = _field(default_factory=list)
+    profiles_subdir: str = "apparmor.d"
 
     @classmethod
     def from_raw(cls, raw: object) -> "Settings":
@@ -134,7 +135,19 @@ class Settings:
         paths = apparmor.get("includeSearchPaths", [])
         if isinstance(paths, list):
             s.include_search_paths = [p for p in paths if isinstance(p, str)]
+        subdir = apparmor.get("profilesSubdir", "apparmor.d")
+        if isinstance(subdir, str):
+            s.profiles_subdir = subdir
         return s
+
+
+def _effective_index_path(workspace: Path, profiles_subdir: str) -> Optional[Path]:
+    """Return the directory to index within *workspace*, or None if it doesn't exist."""
+    if not profiles_subdir or profiles_subdir in (".", ""):
+        target = workspace
+    else:
+        target = workspace / profiles_subdir
+    return target if target.is_dir() else None
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
@@ -275,12 +288,18 @@ def did_close(ls: AppArmorLanguageServer, params: DidCloseTextDocumentParams):
 
 @server.feature(INITIALIZED)
 def initialized(ls: AppArmorLanguageServer, params: InitializedParams) -> None:
-    paths = [
+    roots = [
         Path(uri.removeprefix("file://"))
         for uri in ls.workspace.folders
         if uri.startswith("file://")
     ]
-    valid = [p for p in paths if p.is_dir()]
+    with ls._settings_lock:
+        profiles_subdir = ls._settings.profiles_subdir
+    valid = [
+        p
+        for root in roots
+        if (p := _effective_index_path(root, profiles_subdir)) is not None
+    ]
     logger.info("Initialized; indexing %d workspace folder(s)", len(valid))
     if not valid:
         return
@@ -299,10 +318,15 @@ def workspace_did_change_folders(
     )
     if ls._indexer is None:
         return
+    with ls._settings_lock:
+        profiles_subdir = ls._settings.profiles_subdir
     for folder in params.event.removed:
         ls._indexer.unwatch_folder(Path(folder.uri.removeprefix("file://")))
     for folder in params.event.added:
-        ls._indexer.watch_new_folder(Path(folder.uri.removeprefix("file://")))
+        root = Path(folder.uri.removeprefix("file://"))
+        target = _effective_index_path(root, profiles_subdir)
+        if target is not None:
+            ls._indexer.watch_new_folder(target)
 
 
 @server.feature(WORKSPACE_DID_CHANGE_CONFIGURATION)

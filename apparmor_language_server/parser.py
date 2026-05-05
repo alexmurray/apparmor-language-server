@@ -428,6 +428,7 @@ class Parser:
     # ── Entry point ───────────────────────────────────────────────────────────
 
     def parse(self) -> DocumentNode:
+        logger.debug("Parsing %s (%d lines)", self._uri, len(self._lines))
         doc = DocumentNode(uri=self._uri)
         while self._pos < len(self._lines):
             node = self._parse_node()
