@@ -417,6 +417,35 @@ class TestFileRules:
         assert "/etc/app.conf" in paths
         assert errors == []
 
+    def test_leading_brace_alternation_path(self):
+        src = "profile x {\n  {/,}bin/rygel mr,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1
+        assert file_rules[0].path == "{/,}bin/rygel"
+        assert errors == []
+
+    def test_leading_brace_alternation_with_glob(self):
+        src = "profile x {\n  {/usr,}/lib/rygel/** r,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1
+        assert file_rules[0].path == "{/usr,}/lib/rygel/**"
+        assert errors == []
+
+    def test_leading_brace_alternation_multiple_rules(self):
+        src = "profile x {\n  {/,}bin/foo r,\n  {/,}sbin/bar r,\n  /etc/app.conf r,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        paths = {f.path for f in file_rules}
+        assert "{/,}bin/foo" in paths
+        assert "{/,}sbin/bar" in paths
+        assert "/etc/app.conf" in paths
+        assert errors == []
+
 
 # ── Quoted-path file rules ────────────────────────────────────────────────────
 

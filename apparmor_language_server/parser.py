@@ -66,7 +66,7 @@ _RE_SIGNAL_PEER = re.compile(r"\bpeer=(\S+)")
 _RE_FILE_QUALIFIERS = re.compile(
     r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS + ["owner"]) + r")\s+)*)?"
 )
-_RE_FILE_PATH = r'"[^"]*"|[@/]\S+'
+_RE_FILE_PATH = r'"[^"]*"|[@/{]\S+'
 RE_FILE_PREFIX = re.compile(
     _RE_FILE_QUALIFIERS.pattern
     + (
@@ -166,12 +166,17 @@ def _line_opens_profile(line: str) -> bool:
         # variable reference (@{VAR}) or brace alternation (/path/{a,b}) is
         # preceded by '@' or a path character, never by a space or tab.
         if not any(
-            ch == "{" and (i == 0 or line[i - 1] in " \t") for i, ch in enumerate(line)
+            ch == "{" and i > 0 and line[i - 1] in " \t" for i, ch in enumerate(line)
         ):
             return False
     s = line.lstrip()
     # Hat is handled separately
     if s.startswith("hat "):
+        return False
+    # A path-leading brace alternation ({/,}bin/foo) is a file rule, not a
+    # profile. RE_PROFILE_OPEN excludes '{' from the name group, so any such
+    # line would match with an empty name — which is not a valid profile.
+    if s.startswith("{"):
         return False
     # Must have 'profile' keyword OR start with a path / name
     if s.startswith("profile") or s.startswith("/") or s.startswith("@"):
