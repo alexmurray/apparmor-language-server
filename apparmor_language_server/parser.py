@@ -162,7 +162,12 @@ def _line_opens_profile(line: str) -> bool:
     """Return True if this line starts a profile or sub-profile block."""
     if not line.rstrip().endswith("{"):
         # Check for single-line: profile x { ... }
-        if "{" not in line:
+        # A profile-body '{' is always preceded by whitespace. '{' inside a
+        # variable reference (@{VAR}) or brace alternation (/path/{a,b}) is
+        # preceded by '@' or a path character, never by a space or tab.
+        if not any(
+            ch == "{" and (i == 0 or line[i - 1] in " \t") for i, ch in enumerate(line)
+        ):
             return False
     s = line.lstrip()
     # Hat is handled separately

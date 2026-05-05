@@ -354,6 +354,69 @@ class TestFileRules:
         assert "deny" in deny_rule.qualifiers
         assert "r" in deny_rule.perms
 
+    def test_variable_only_path_suffix(self):
+        # Regression: @{VAR} r, was misidentified as a profile opener because
+        # _line_opens_profile saw '{' in the line and RE_PROFILE_OPEN matched
+        # the '@' as the profile name and '{' from @{VAR} as the opening brace.
+        src = "profile x {\n  @{HOME} r,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert file_rules[0].path == "@{HOME}"
+        assert "r" in file_rules[0].perms
+        assert errors == []
+
+    def test_variable_path_with_trailing_slash(self):
+        src = "profile x {\n  @{HOME}/ r,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert file_rules[0].path == "@{HOME}/"
+        assert "r" in file_rules[0].perms
+        assert errors == []
+
+    def test_variable_path_with_glob(self):
+        src = "profile x {\n  @{HOME}/** rw,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert file_rules[0].path == "@{HOME}/**"
+        assert "rw" in file_rules[0].perms
+        assert errors == []
+
+    def test_variable_path_with_brace_alternation(self):
+        src = "profile x {\n  @{HOME}/{.config,.local}/ r,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert file_rules[0].path == "@{HOME}/{.config,.local}/"
+        assert errors == []
+
+    def test_variable_path_with_deny_qualifier(self):
+        src = "profile x {\n  deny @{HOME}/** w,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert "deny" in file_rules[0].qualifiers
+        assert file_rules[0].path == "@{HOME}/**"
+        assert errors == []
+
+    def test_variable_path_with_multiple_rules(self):
+        src = "profile x {\n  @{HOME}/ r,\n  @{HOME}/** rw,\n  /etc/app.conf r,\n}\n"
+        doc, errors = parse_document("file:///test.aa", src)
+        children = doc.profiles[0].children
+        file_rules = [c for c in children if isinstance(c, FileRuleNode)]
+        paths = {f.path for f in file_rules}
+        assert "@{HOME}/" in paths
+        assert "@{HOME}/**" in paths
+        assert "/etc/app.conf" in paths
+        assert errors == []
+
 
 # ── Quoted-path file rules ────────────────────────────────────────────────────
 
