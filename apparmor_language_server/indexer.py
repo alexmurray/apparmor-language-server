@@ -179,7 +179,7 @@ class WorkspaceIndexer:
         while not self._stop.is_set():
             try:
                 events = self._inotify.read(timeout=500)
-            except OSError:
+            except (OSError, ValueError):
                 if self._stop.is_set():
                     return
                 raise
