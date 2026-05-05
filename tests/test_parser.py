@@ -362,7 +362,9 @@ class TestFileRules:
         doc, errors = parse_document("file:///test.aa", src)
         children = doc.profiles[0].children
         file_rules = [c for c in children if isinstance(c, FileRuleNode)]
-        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert len(file_rules) == 1, (
+            f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        )
         assert file_rules[0].path == "@{HOME}"
         assert "r" in file_rules[0].perms
         assert errors == []
@@ -372,7 +374,9 @@ class TestFileRules:
         doc, errors = parse_document("file:///test.aa", src)
         children = doc.profiles[0].children
         file_rules = [c for c in children if isinstance(c, FileRuleNode)]
-        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert len(file_rules) == 1, (
+            f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        )
         assert file_rules[0].path == "@{HOME}/"
         assert "r" in file_rules[0].perms
         assert errors == []
@@ -382,7 +386,9 @@ class TestFileRules:
         doc, errors = parse_document("file:///test.aa", src)
         children = doc.profiles[0].children
         file_rules = [c for c in children if isinstance(c, FileRuleNode)]
-        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert len(file_rules) == 1, (
+            f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        )
         assert file_rules[0].path == "@{HOME}/**"
         assert "rw" in file_rules[0].perms
         assert errors == []
@@ -392,7 +398,9 @@ class TestFileRules:
         doc, errors = parse_document("file:///test.aa", src)
         children = doc.profiles[0].children
         file_rules = [c for c in children if isinstance(c, FileRuleNode)]
-        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert len(file_rules) == 1, (
+            f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        )
         assert file_rules[0].path == "@{HOME}/{.config,.local}/"
         assert errors == []
 
@@ -401,7 +409,9 @@ class TestFileRules:
         doc, errors = parse_document("file:///test.aa", src)
         children = doc.profiles[0].children
         file_rules = [c for c in children if isinstance(c, FileRuleNode)]
-        assert len(file_rules) == 1, f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        assert len(file_rules) == 1, (
+            f"Expected FileRuleNode, got {[type(c).__name__ for c in children]}"
+        )
         assert "deny" in file_rules[0].qualifiers
         assert file_rules[0].path == "@{HOME}/**"
         assert errors == []
@@ -436,7 +446,9 @@ class TestFileRules:
         assert errors == []
 
     def test_leading_brace_alternation_multiple_rules(self):
-        src = "profile x {\n  {/,}bin/foo r,\n  {/,}sbin/bar r,\n  /etc/app.conf r,\n}\n"
+        src = (
+            "profile x {\n  {/,}bin/foo r,\n  {/,}sbin/bar r,\n  /etc/app.conf r,\n}\n"
+        )
         doc, errors = parse_document("file:///test.aa", src)
         children = doc.profiles[0].children
         file_rules = [c for c in children if isinstance(c, FileRuleNode)]

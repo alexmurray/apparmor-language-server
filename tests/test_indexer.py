@@ -9,11 +9,10 @@ import threading
 import time
 
 import inotify_simple
-from inotify_simple import flags
-
+import pytest
 from apparmor_language_server.indexer import WorkspaceIndexer, _is_hidden
 from apparmor_language_server.parser import DocumentNode
-
+from inotify_simple import flags
 
 # ── Server stub ───────────────────────────────────────────────────────────────
 
@@ -26,9 +25,6 @@ class MockServerForIndexer:
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-import pytest
 
 
 @pytest.fixture
@@ -61,6 +57,7 @@ class TestIsHidden:
 
     def test_root_slash_not_treated_as_hidden(self):
         from pathlib import Path
+
         assert not _is_hidden(Path("/etc/apparmor.d/usr.bin.test"))
 
 
@@ -178,12 +175,16 @@ class TestHandleEvent:
         assert len(mock_server._doc_cache) == 0
 
     def test_unknown_wd_is_noop(self, tmp_path, indexer, mock_server):
-        event = inotify_simple.Event(wd=9999, mask=int(flags.CLOSE_WRITE), cookie=0, name="x.aa")
+        event = inotify_simple.Event(
+            wd=9999, mask=int(flags.CLOSE_WRITE), cookie=0, name="x.aa"
+        )
         indexer._handle_event(event)  # must not raise
 
     def test_empty_name_is_noop(self, tmp_path, indexer, mock_server):
         self._register_dir(indexer, tmp_path)
-        event = inotify_simple.Event(wd=self.FAKE_WD, mask=int(flags.CLOSE_WRITE), cookie=0, name="")
+        event = inotify_simple.Event(
+            wd=self.FAKE_WD, mask=int(flags.CLOSE_WRITE), cookie=0, name=""
+        )
         indexer._handle_event(event)  # must not raise
         assert len(mock_server._doc_cache) == 0
 
@@ -204,6 +205,7 @@ class TestUnwatchFolder:
         sub1 = tmp_path / "a"
         sub2 = tmp_path / "b"
         from pathlib import Path
+
         other = Path("/tmp")
         # inject fake watch descriptors (rm_watch will fail gracefully via OSError catch)
         indexer._wd_to_dir[1] = tmp_path
@@ -219,6 +221,7 @@ class TestUnwatchFolder:
 
     def test_unwatch_nonexistent_path_is_noop(self, tmp_path, indexer):
         from pathlib import Path
+
         indexer.unwatch_folder(Path("/no/such/path"))  # must not raise
 
 

@@ -8,27 +8,6 @@ from __future__ import annotations
 import threading
 
 import pytest
-from lsprotocol.types import (
-    CompletionParams,
-    DefinitionParams,
-    DidChangeConfigurationParams,
-    DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams,
-    DocumentFormattingParams,
-    DocumentHighlightKind,
-    DocumentHighlightParams,
-    DocumentRangeFormattingParams,
-    DocumentSymbolParams,
-    FormattingOptions,
-    Position,
-    Range,
-    SymbolKind,
-    TextDocumentContentChangePartial,
-    TextDocumentIdentifier,
-    VersionedTextDocumentIdentifier,
-    WorkspaceSymbolParams,
-)
-
 from apparmor_language_server.parser import (
     CapabilityNode,
     DocumentNode,
@@ -57,7 +36,26 @@ from apparmor_language_server.server import (
     references,
     workspace_symbols,
 )
-
+from lsprotocol.types import (
+    CompletionParams,
+    DefinitionParams,
+    DidChangeConfigurationParams,
+    DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams,
+    DocumentFormattingParams,
+    DocumentHighlightKind,
+    DocumentHighlightParams,
+    DocumentRangeFormattingParams,
+    DocumentSymbolParams,
+    FormattingOptions,
+    Position,
+    Range,
+    SymbolKind,
+    TextDocumentContentChangePartial,
+    TextDocumentIdentifier,
+    VersionedTextDocumentIdentifier,
+    WorkspaceSymbolParams,
+)
 
 # ── Shared test data ──────────────────────────────────────────────────────────
 
@@ -1202,7 +1200,6 @@ class TestDidChangeUsesWorkspaceText:
 
     def test_fragment_only_gives_no_variable(self):
         """Parsing a bare fragment produces no variable — demonstrates the old bug."""
-        ls = MockLS()
         # Workspace text is intentionally NOT set; simulates the buggy path where
         # the handler would have called parse_and_cache with the fragment directly.
         result = parse_document(URI, "@")
