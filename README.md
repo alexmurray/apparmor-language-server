@@ -222,12 +222,14 @@ apparmor_language_server/
 ├── __init__.py         – package metadata
 ├── __main__.py         – python -m apparmor_language_server entry point
 ├── server.py           – pygls LSP server, all handler registration
+├── indexer.py          – workspace indexer
 ├── parser.py           – line-oriented AST parser (profiles, rules, …)
 ├── constants.py        – capabilities, keywords, permissions, abstractions, …
 ├── completions.py      – context-aware completion provider
 ├── diagnostics.py      – linting / diagnostic checks
 ├── formatting.py       – auto-formatter (returns TextEdits)
-└── hover.py            – hover documentation provider
+├── hover.py            – hover documentation provider
+└── docs.py             – helpers for consistent hover/completion docs
 ```
 
 ### Adding new checks
