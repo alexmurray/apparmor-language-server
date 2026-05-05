@@ -34,7 +34,6 @@ from lsprotocol.types import (
     # Server capabilities
     INITIALIZED,
     TEXT_DOCUMENT_COMPLETION,
-    WORKSPACE_DID_CHANGE_CONFIGURATION,
     TEXT_DOCUMENT_DEFINITION,
     TEXT_DOCUMENT_DID_CHANGE,
     TEXT_DOCUMENT_DID_CLOSE,
@@ -46,6 +45,7 @@ from lsprotocol.types import (
     TEXT_DOCUMENT_HOVER,
     TEXT_DOCUMENT_RANGE_FORMATTING,
     TEXT_DOCUMENT_REFERENCES,
+    WORKSPACE_DID_CHANGE_CONFIGURATION,
     WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS,
     WORKSPACE_SYMBOL,
     # Types
@@ -79,11 +79,11 @@ from lsprotocol.types import (
 )
 from pygls.lsp.server import LanguageServer
 
-from .indexer import WorkspaceIndexer
 from .completions import get_completions
 from .diagnostics import get_diagnostics
 from .formatting import FormatterOptions, format_document
 from .hover import get_hover
+from .indexer import WorkspaceIndexer
 from .parser import (
     CapabilityNode,
     DocumentNode,
@@ -268,7 +268,10 @@ def did_open(ls: AppArmorLanguageServer, params: DidOpenTextDocumentParams):
 def did_change(ls: AppArmorLanguageServer, params: DidChangeTextDocumentParams):
     uri = params.text_document.uri
     logger.debug("Changed: %s", uri)
-    text = params.content_changes[-1].text
+    # pygls has already applied incremental changes to its workspace state before
+    # calling this handler, so get_text() returns the full up-to-date document.
+    # params.content_changes[-1].text is only the changed fragment in incremental mode.
+    text = ls.get_text(uri) or ""
     ls._publish_diagnostics(uri, text)
 
 

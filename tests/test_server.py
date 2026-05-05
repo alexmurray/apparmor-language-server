@@ -12,6 +12,7 @@ from lsprotocol.types import (
     CompletionParams,
     DefinitionParams,
     DidChangeConfigurationParams,
+    DidChangeTextDocumentParams,
     DidCloseTextDocumentParams,
     DocumentFormattingParams,
     DocumentHighlightKind,
@@ -22,7 +23,9 @@ from lsprotocol.types import (
     Position,
     Range,
     SymbolKind,
+    TextDocumentContentChangePartial,
     TextDocumentIdentifier,
+    VersionedTextDocumentIdentifier,
     WorkspaceSymbolParams,
 )
 
@@ -43,6 +46,7 @@ from apparmor_language_server.server import (
     _word_at_position,
     completions,
     definition,
+    did_change,
     did_change_configuration,
     did_close,
     document_symbols,
@@ -101,6 +105,9 @@ class MockLS:
     def evict(self, uri: str) -> None:
         self._doc_cache.pop(uri, None)
         self._texts.pop(uri, None)
+
+    def _publish_diagnostics(self, uri: str, text: str) -> None:
+        self.parse_and_cache(uri, text)
 
 
 def _ls(text: str = SIMPLE_PROFILE) -> MockLS:
@@ -1151,3 +1158,71 @@ class TestEffectiveIndexPath:
     def test_workspace_root_missing_returns_none(self, tmp_path):
         missing = tmp_path / "nonexistent"
         assert _effective_index_path(missing, "") is None
+
+
+# ── did_change: incremental sync uses workspace text, not change fragment ─────
+
+PROFILE_WITH_VARIABLE = """\
+@{HOME} = /home/*
+profile myapp /usr/bin/myapp {
+  @{HOME}/ r,
+}
+"""
+
+
+def _make_change_params(
+    uri: str,
+    fragment: str,
+    version: int = 2,
+) -> DidChangeTextDocumentParams:
+    """Build a DidChangeTextDocumentParams as eglot would send in incremental mode."""
+    return DidChangeTextDocumentParams(
+        text_document=VersionedTextDocumentIdentifier(uri=uri, version=version),
+        content_changes=[
+            TextDocumentContentChangePartial(
+                text=fragment,
+                range=Range(start=Position(0, 0), end=Position(0, 1)),
+            )
+        ],
+    )
+
+
+class TestDidChangeUsesWorkspaceText:
+    def test_uses_workspace_text_not_fragment(self):
+        """did_change must parse the full document, not the incremental fragment."""
+        ls = MockLS()
+        # Simulate pygls having applied incremental changes: workspace holds full text.
+        ls._texts[URI] = PROFILE_WITH_VARIABLE
+        # params carries only a one-character fragment (as in incremental sync).
+        params = _make_change_params(URI, "@")
+        did_change(ls, params)
+        doc, _ = ls._doc_cache[URI]
+        # The variable defined in the full document must be present.
+        assert "@{HOME}" in doc.all_variables.get(URI, {})
+
+    def test_fragment_only_gives_no_variable(self):
+        """Parsing a bare fragment produces no variable — demonstrates the old bug."""
+        ls = MockLS()
+        # Workspace text is intentionally NOT set; simulates the buggy path where
+        # the handler would have called parse_and_cache with the fragment directly.
+        result = parse_document(URI, "@")
+        assert "@{HOME}" not in result[0].all_variables.get(URI, {})
+
+    def test_cache_not_overwritten_with_fragment_content(self):
+        """After did_change the cached document reflects the full workspace text."""
+        ls = MockLS()
+        ls._texts[URI] = PROFILE_WITH_VARIABLE
+        params = _make_change_params(URI, "x")
+        did_change(ls, params)
+        doc, _ = ls._doc_cache[URI]
+        # Profile parsed from full text; fragment "x" alone would yield no profile.
+        assert len(doc.profiles) == 1
+
+    def test_empty_workspace_text_parses_empty(self):
+        """If get_text returns empty (doc not open), an empty document is cached."""
+        ls = MockLS()
+        # No text stored for URI — get_text returns "".
+        params = _make_change_params(URI, "capability net_admin,")
+        did_change(ls, params)
+        doc, _ = ls._doc_cache[URI]
+        assert doc.profiles == []
