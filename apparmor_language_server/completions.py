@@ -533,9 +533,6 @@ def _complete_variables(partial: str, doc: DocumentNode) -> list[CompletionItem]
                         label=name,
                         kind=CompletionItemKind.Variable,
                         detail=desc,
-                        insert_text=name[
-                            len(partial) :
-                        ],  # only insert the remaining part
                         documentation=MarkupContent(
                             kind=MarkupKind.Markdown,
                             value=f"**`{name}`**\n\n{desc}",
