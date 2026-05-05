@@ -49,6 +49,7 @@ from .constants import (
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
 )
+from .docs import capability_doc, file_permissions_doc, variable_doc
 from .parser import DocumentNode
 
 # ── Regex helpers ─────────────────────────────────────────────────────────────
@@ -353,8 +354,8 @@ def _complete_capabilities(partial: str) -> list[CompletionItem]:
                     label=cap,
                     kind=CompletionItemKind.EnumMember,
                     documentation=MarkupContent(
-                        kind=MarkupKind.PlainText,
-                        value=f"Linux capability: CAP_{cap.upper()}",
+                        kind=MarkupKind.Markdown,
+                        value=capability_doc(cap),
                     ),
                 )
             )
@@ -376,7 +377,7 @@ def _complete_file_permissions(partial: str) -> list[CompletionItem]:
                     detail=desc,
                     documentation=MarkupContent(
                         kind=MarkupKind.Markdown,
-                        value=f"**`{perm}`** — {desc}",
+                        value=file_permissions_doc(perm),
                     ),
                 )
             )
@@ -526,16 +527,14 @@ def _complete_variables(partial: str, doc: DocumentNode) -> list[CompletionItem]
     items: list[CompletionItem] = []
     for uri, vars in doc.all_variables.items():
         for name, var in vars.items():
-            desc = f"Variable defined in {Path(uri).name} at line {var.range.start.line + 1}"
             if not partial or name.startswith(partial):
                 items.append(
                     CompletionItem(
                         label=name,
                         kind=CompletionItemKind.Variable,
-                        detail=desc,
                         documentation=MarkupContent(
                             kind=MarkupKind.Markdown,
-                            value=f"**`{name}`**\n\n{desc}",
+                            value=variable_doc(name, var, uri),
                         ),
                     )
                 )

@@ -25,11 +25,9 @@ from lsprotocol.types import (
 )
 
 from .constants import (
-    CAPABILITY_DEFS,
+    CAPABILITIES,
     DBUS_BUS_DEFS,
     DBUS_PERMISSION_DEFS,
-    EXECUTE_PERMISSIONS,
-    FILE_PERMISSIONS,
     FLAG_DEFS,
     IO_URING_PERMISSION_DEFS,
     KEYWORD_DEFS,
@@ -46,6 +44,7 @@ from .constants import (
     SIGNAL_PERMISSIONS,
     UNIX_TYPES,
 )
+from .docs import capability_doc, file_permissions_doc, variable_doc
 from .parser import (
     ABINode,
     AllRuleNode,
@@ -98,13 +97,11 @@ def get_hover(
             var_name = "@{" + m.group(1) + "}"
             for uri, vars in doc.all_variables.items():
                 if var_name in vars:
-                    var = vars[var_name]
-                    comment_text = " ".join(c.text for c in var.comments)
-                    body = f"**`{var_name}`**\n\n"
-                    if comment_text:
-                        body += comment_text + "\n\n"
-                    body += f"`{var_name}` = {' '.join(var.values)}\n\nDefined at {uri} line {var.range.start.line}"
-                    return _make_hover(body, m.start(), m.end())
+                    return _make_hover(
+                        variable_doc(var_name, vars[var_name], uri),
+                        m.start(),
+                        m.end(),
+                    )
 
     node = _node_at_position(doc, position.line)
     logger.debug(
@@ -195,9 +192,8 @@ def _hover_capability(line_text: str, ch: int) -> Optional[Hover]:
         return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
     if word == "capability":
         return _make_hover(KEYWORD_DEFS["capability"].doc, ws, we)
-    cap_def = CAPABILITY_DEFS.get(word)
-    if cap_def:
-        return _make_hover(cap_def.doc, ws, we)
+    if word in CAPABILITIES:
+        return _make_hover(capability_doc(word), ws, we)
     return None
 
 
@@ -528,24 +524,4 @@ def _make_hover(md: str, start: int, end: int) -> Hover:
 
 
 def _file_perm_hover(perm_str: str, start: int, end: int) -> Hover:
-    perms: list[str] = []
-    i = 0
-    while i < len(perm_str):
-        for p in sorted(
-            FILE_PERMISSIONS.keys() | EXECUTE_PERMISSIONS.keys(),
-            key=len,
-            reverse=True,
-        ):
-            p = str(p)
-            if perm_str.startswith(p, i):
-                perms.append(p)
-                i += len(p)
-                break
-        else:
-            i += 1
-    lines_out = [f"**File permissions `{perm_str}`**\n"]
-    for perm in perms:
-        desc = FILE_PERMISSIONS.get(perm) or EXECUTE_PERMISSIONS.get(perm)
-        if desc:
-            lines_out.append(f"- `{perm}` — {desc}")
-    return _make_hover("\n".join(lines_out), start, end)
+    return _make_hover(file_permissions_doc(perm_str), start, end)
