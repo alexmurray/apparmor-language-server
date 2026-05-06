@@ -10,6 +10,10 @@ description: |
 
 grade: stable # must be 'stable' to release into candidate/stable channels
 confinement: strict
+source-code: https://github.com/alexmurray/apparmor-language-server
+issues: https://github.com/alexmurray/apparmor-language-server/issues
+website: https://github.com/alexmurray/apparmor-language-server
+icon: snap/icon.svg
 
 apps:
   apparmor-language-server:
@@ -29,9 +33,11 @@ parts:
   apparmor-language-server:
     plugin: python
     source: .
+    build-packages:
+      - git
     build-snaps:
       - yq
-    override-pull: |
+    override-build: |
       craftctl default
       # read version from pyproject.toml and set it as the snap version along
       # with the git short hash
