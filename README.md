@@ -17,7 +17,7 @@ server for editing **AppArmor profiles**, written in Python using
 | **Goto Definition** | Jump from `#include <…>` or `include <…>` to the target file; jump to profile definitions by name |
 | **Document Symbols** | Full outline: all profiles, hats, capabilities, file rules, includes and variables |
 | **Workspace Symbols** | Search profiles across all open documents |
-| **Diagnostics / Linting** | Unknown capabilities, invalid network qualifiers, bad file permission chars, dangerous unconfined exec (`ux`/`Ux`), empty profiles, duplicate capabilities, conflicting allow+deny, undefined variables, missing include targets, unclosed profiles, unknown profile flags |
+| **Diagnostics / Linting** | Unknown capabilities, invalid network qualifiers, dangerous unconfined exec (`ux`/`Ux`/`pux`/`PUx`/`cux`/`CUx`), empty profiles, duplicate capabilities, conflicting allow+deny, undefined variables, missing include targets, unclosed profiles, unknown profile flags |
 | **Formatting** | Normalise indentation, remove trailing whitespace, sort capabilities alphabetically, sort parenthesised lists, ensure trailing commas on all rules, normalise `#include` → `include`, collapse multiple blank lines |
 | **Range Formatting** | Format a selected region only |
 | **References** | Find all references to the identifier or variable under the cursor across all open documents (excludes path components and comments) |
@@ -201,7 +201,7 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `unknown-flag` | Error | Unrecognised profile flag in `flags=(…)` |
 | `unknown-network-qualifier` | Warning | Unknown network family or socket type |
 | `unknown-keyword` | Warning | Unrecognised rule keyword |
-| `dangerous-exec` | Warning | `ux`/`Ux`/`pux`/`cux` allows unconfined exec |
+| `dangerous-exec` | Warning | `ux`/`Ux`/`pux`/`PUx`/`cux`/`CUx` allows unconfined exec |
 | `prefer-append` | Information | `w` on a log file; consider `a` instead |
 | `empty-profile` | Warning | Profile body has no rules |
 | `duplicate-capability` | Warning | Capability declared more than once |
