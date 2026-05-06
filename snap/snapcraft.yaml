@@ -3,10 +3,20 @@ adopt-info: apparmor-language-server
 base: core24
 summary: Language server for AppArmor profiles
 description: |
-  This is a language server for AppArmor profiles, which provides features such as
-  code completion, linting, and diagnostics for AppArmor profiles. It is designed
-  to be used with editors that support the Language Server Protocol (LSP), such as
-  Visual Studio Code, Vim, and Emacs.
+  This is a language server for AppArmor profiles, which provides features such
+  as code completion, linting, and diagnostics for AppArmor profiles. It is
+  designed to be used with editors that support the Language Server Protocol
+  (LSP), such as Visual Studio Code, Vim, and Emacs.
+
+  To ensure that the language server has access to the necessary AppArmor
+  profiles, it is recommended to connect the snap to the 'etc-apparmor-d'
+  system-files plug, which allows read access to the /etc/apparmor.d directory
+  where AppArmor profiles are typically stored. This can be done by running the
+  following command after installing the snap:
+
+  ```bash
+  sudo snap connect apparmor-language-server:etc-apparmor-d
+  ```
 
 grade: stable # must be 'stable' to release into candidate/stable channels
 confinement: strict
