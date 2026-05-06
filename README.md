@@ -68,6 +68,29 @@ apparmor-language-server --tcp --host 127.0.0.1 --port 2087
 
 ---
 
+## Server configuration
+
+### Environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `APPARMOR_LSP_LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+
+### LSP workspace settings
+
+These are passed to the server via the standard LSP
+`workspace/didChangeConfiguration` notification, nested under the
+`apparmor` key.  How you set them depends on your editor (see the
+examples below each editor section).
+
+| Setting | Type | Default | Effect |
+|---|---|---|---|
+| `apparmor.diagnostics.enable` | boolean | `true` | Enable or disable all diagnostic (linting) checks |
+| `apparmor.includeSearchPaths` | string[] | `[]` | Extra directories to search when resolving `include` and `abi` paths |
+| `apparmor.profilesSubdir` | string | `"apparmor.d"` | Subdirectory of the workspace root to index for workspace symbols; set to `""` or `"."` to index the whole workspace |
+
+---
+
 ## Editor configuration
 
 ### Neovim (with `nvim-lspconfig`)
