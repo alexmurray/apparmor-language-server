@@ -387,7 +387,7 @@ def completions(ls: AppArmorLanguageServer, params: CompletionParams) -> Complet
         len(doc.includes),
         sum(len(vars) for vars in doc.all_variables.values()),
     )
-    return get_completions(doc, line_text, position, uri)
+    return get_completions(doc, line_text, position, uri, ls._get_search_dirs())
 
 
 # ── Hover ─────────────────────────────────────────────────────────────────────

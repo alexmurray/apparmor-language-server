@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Optional
 
 from lsprotocol.types import (
     CompletionItem,
@@ -90,6 +91,7 @@ def get_completions(
     line_text: str,
     position: Position,
     document_uri: str,
+    search_dirs: Optional[list[Path]] = None,
 ) -> CompletionList:
     """
     Return completion items for the given cursor position.
@@ -112,7 +114,7 @@ def get_completions(
         im = _RE_ABI_PATH.match(prefix)
         partial = im.group(1) if im else ""
         logger.debug(f"ABI completion triggered with partial: '{partial}'")
-        items = _complete_abi_paths(partial, document_uri)
+        items = _complete_abi_paths(partial, document_uri, search_dirs)
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Include path completion ────────────────────────────────────────────
@@ -120,7 +122,7 @@ def get_completions(
         im = _RE_INCLUDE_PATH.match(prefix)
         partial = im.group(1) if im else ""
         logger.debug(f"Include path completion triggered with partial: '{partial}'")
-        items = _complete_include_paths(partial, document_uri)
+        items = _complete_include_paths(partial, document_uri, search_dirs)
         return CompletionList(is_incomplete=False, items=items)
 
     # ── Profile flags completion ───────────────────────────────────────────
@@ -386,14 +388,17 @@ def _complete_file_permissions(partial: str) -> list[CompletionItem]:
 
 # ── Include path completions ──────────────────────────────────────────────────
 
-_APPARMOR_SEARCH_DIRS = [
+_DEFAULT_SEARCH_DIRS: list[Path] = [
     Path("/etc/apparmor.d"),
     Path("/usr/share/apparmor"),
-    Path("/usr/share/apparmor.d"),
 ]
 
 
-def _complete_abi_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
+def _complete_abi_paths(
+    partial: str,
+    doc_uri: str,
+    search_dirs: Optional[list[Path]] = None,
+) -> list[CompletionItem]:
     """
     Complete ABI paths.
     Shows known ABIs, then files found in abi dirs.
@@ -401,7 +406,7 @@ def _complete_abi_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
     items: list[CompletionItem] = []
     seen: set[str] = set()
 
-    for base in _APPARMOR_SEARCH_DIRS:
+    for base in search_dirs if search_dirs is not None else _DEFAULT_SEARCH_DIRS:
         if not base.is_dir():
             continue
         try:
@@ -424,7 +429,11 @@ def _complete_abi_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
     return items
 
 
-def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
+def _complete_include_paths(
+    partial: str,
+    doc_uri: str,
+    search_dirs: Optional[list[Path]] = None,
+) -> list[CompletionItem]:
     """
     Complete include paths.
     Shows known abstractions, then files found in search dirs, then local files.
@@ -433,7 +442,7 @@ def _complete_include_paths(partial: str, doc_uri: str) -> list[CompletionItem]:
     seen: set[str] = set()
 
     # 1. Files on disk under search dirs
-    for base in _APPARMOR_SEARCH_DIRS:
+    for base in search_dirs if search_dirs is not None else _DEFAULT_SEARCH_DIRS:
         if not base.is_dir():
             continue
         try:
