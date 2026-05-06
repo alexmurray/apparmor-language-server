@@ -1,3 +1,4 @@
+title: AppArmor Language Server
 name: apparmor-language-server
 adopt-info: apparmor-language-server
 base: core24
@@ -19,8 +20,10 @@ description: |
   ```
 
 grade: stable # must be 'stable' to release into candidate/stable channels
+license: GPL-3.0+
 confinement: strict
 source-code: https://github.com/alexmurray/apparmor-language-server
+contact: https://github.com/alexmurray/apparmor-language-server/issues
 issues: https://github.com/alexmurray/apparmor-language-server/issues
 website: https://github.com/alexmurray/apparmor-language-server
 icon: snap/icon.svg
