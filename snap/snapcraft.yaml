@@ -15,6 +15,7 @@ apps:
   apparmor-language-server:
     command: bin/apparmor-language-server
     plugs:
+      - network-bind # for --tcp
       - network
       - home
       - etc-apparmor-d
