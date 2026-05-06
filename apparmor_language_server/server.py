@@ -490,8 +490,11 @@ def definition(
 
     word = _word_at_position(line_text, position.character)
     if word:
-        # Find a profile name reference
-        for profile in doc.profiles:
+        logger.debug("Looking for definition of '%s'", word)
+        # Find a profile name reference in any of the profiles or their children
+        for profile in doc.profiles + [
+            c for p in doc.profiles for c in p.children if isinstance(c, ProfileNode)
+        ]:
             if profile.name == word:
                 return [
                     Location(

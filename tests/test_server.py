@@ -483,6 +483,18 @@ class TestDefinitionHandler:
         assert result is not None
         assert result[0].uri == URI
 
+    def test_child_profile_transition_returns_location(self):
+        # line 1: "  file Cx /bin/inner -> inner,"  — cursor on "inner" at char 26
+        src = "profile myapp /usr/bin/myapp {\n  file Cx /bin/inner -> inner,\n profile inner { }\n}\n"
+        ls = _ls(src)
+        params = DefinitionParams(
+            text_document=TextDocumentIdentifier(uri=URI),
+            position=Position(line=1, character=26),
+        )
+        result = definition(ls, params)
+        assert result is not None
+        assert result[0].uri == URI
+
     def test_variable_def_returns_location(self):
         src = "@{MY_VAR} = /foo\nprofile test {\n  /@{MY_VAR}/bar r,\n}\n"
         ls = _ls(src)
