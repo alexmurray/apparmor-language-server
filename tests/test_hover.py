@@ -219,6 +219,57 @@ class TestFilePermissionHover:
         assert "file" not in result.lower()
 
 
+# ── FileRuleNode hover ────────────────────────────────────────────────────────
+
+
+class TestFileRuleHover:
+    def test_hover_file_keyword(self):
+        # char 3 lands on 'i' of 'file' in "  file /etc/passwd r,"
+        assert "file" in _rule_text("  file /etc/passwd r,", 3).lower()
+
+    def test_hover_owner_qualifier(self):
+        # char 2 lands on 'o' of 'owner'
+        assert "owner" in _rule_text("  owner /etc/passwd r,", 2).lower()
+
+    def test_hover_deny_qualifier(self):
+        # char 2 lands on 'd' of 'deny'
+        assert "deny" in _rule_text("  deny /etc/passwd r,", 2).lower()
+
+    def test_hover_audit_qualifier(self):
+        # char 2 lands on 'a' of 'audit'
+        assert "audit" in _rule_text("  audit /etc/passwd r,", 2).lower()
+
+    def test_hover_exec_target(self):
+        # "  /usr/bin/app px -> myprofile," — char 21 lands on 'm' of 'myprofile'
+        result = _rule_text("  /usr/bin/app px -> myprofile,", 21)
+        assert "exec target" in result.lower()
+
+    def test_hover_file_permission_k(self):
+        # "  /etc/passwd k," — char 14 lands on 'k'
+        assert "lock" in _rule_text("  /etc/passwd k,", 14).lower()
+
+    def test_hover_file_permission_m(self):
+        # "  /etc/file m," — char 12 lands on 'm'
+        assert "mmap" in _rule_text("  /etc/file m,", 12).lower()
+
+    def test_hover_file_permission_l(self):
+        # "  /etc/passwd l," — char 14 lands on 'l'
+        assert "link" in _rule_text("  /etc/passwd l,", 14).lower()
+
+    def test_hover_execute_permission_px(self):
+        # "  /usr/bin/app px," — char 15 lands on 'p' of 'px'
+        assert "named profile" in _rule_text("  /usr/bin/app px,", 15).lower()
+
+    def test_hover_execute_permission_ix(self):
+        # "  /usr/bin/app ix," — char 15 lands on 'i' of 'ix'
+        assert "inherit" in _rule_text("  /usr/bin/app ix,", 15).lower()
+
+    def test_hover_none_on_path(self):
+        # hovering on the leading '/' of the path should return None
+        result = _hover_rule("  /foo r,", 2)
+        assert result is None
+
+
 # ── Variable hover ────────────────────────────────────────────────────────────
 
 

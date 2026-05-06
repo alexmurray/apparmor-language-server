@@ -6,9 +6,10 @@ Run with: pytest tests/test_parser.py -v
 from __future__ import annotations
 
 from apparmor_language_server.parser import (
+    RE_VARIABLE_DEF,
     ABINode,
-    AllRuleNode,
     AliasNode,
+    AllRuleNode,
     CapabilityNode,
     ChangeHatRuleNode,
     ChangeProfileRuleNode,
@@ -22,7 +23,6 @@ from apparmor_language_server.parser import (
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
-    RE_VARIABLE_DEF,
     RemountRuleNode,
     SignalRuleNode,
     UnixRuleNode,
@@ -312,7 +312,7 @@ class TestFileRules:
         exec_rule = next((f for f in files if f.path == "/usr/bin/app"), None)
         assert exec_rule is not None
         assert "Cx" in exec_rule.perms
-        assert exec_rule.link_target == "child_profile"
+        assert exec_rule.exec_target == "child_profile"
 
     def test_tshark_style_exec_cx(self):
         src = "profile tshark /usr/bin/tshark {\n  file Cx /usr/bin/dumpcap -> dumpcap,\n}\n"
@@ -320,7 +320,7 @@ class TestFileRules:
         files = [c for c in doc.profiles[0].children if isinstance(c, FileRuleNode)]
         exec_rule = next((f for f in files if "/usr/bin/dumpcap" in f.path), None)
         assert exec_rule is not None
-        assert exec_rule.link_target == "dumpcap"
+        assert exec_rule.exec_target == "dumpcap"
 
     def test_pix_exec_with_stacking(self):
         src = "profile x {\n  allow pix /** -> &bwrap//&unpriv_bwrap,\n}\n"

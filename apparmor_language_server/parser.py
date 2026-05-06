@@ -73,7 +73,7 @@ RE_FILE_PREFIX = re.compile(
         r"(?:file\s+)?"
         r"(?P<perms>" + RE_FILE_PERMISSIONS.pattern + r")\s+"
         r"(?P<path>" + _RE_FILE_PATH + r")"
-        r"(?:\s*->\s*(?P<link_target>\S+))?"
+        r"(?:\s*->\s*(?P<exec_target>\S+))?"
         r"\s*,\s*$"
     )
 )
@@ -83,7 +83,7 @@ RE_FILE_SUFFIX = re.compile(
         r"(?:file\s+)?"
         r"(?P<path>" + _RE_FILE_PATH + r")\s+"
         r"(?P<perms>" + RE_FILE_PERMISSIONS.pattern + r")"
-        r"(?:\s*->\s*(?P<link_target>\S+))?"
+        r"(?:\s*->\s*(?P<exec_target>\S+))?"
         r"\s*,\s*$"
     )
 )
@@ -237,7 +237,7 @@ class RuleNode(Node):
 class FileRuleNode(RuleNode):
     path: str = ""
     perms: str = ""
-    link_target: Optional[str] = None
+    exec_target: Optional[str] = None
 
 
 @dataclass
@@ -913,7 +913,7 @@ class Parser:
                 qualifiers=quals,
                 path=path,
                 perms=mf.group("perms"),
-                link_target=mf.group("link_target"),
+                exec_target=mf.group("exec_target"),
             )
 
         # -- Specific keyword rules --

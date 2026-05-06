@@ -76,7 +76,7 @@ from .parser import (
 
 logger = logging.getLogger(__name__)
 
-_RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 _RE_VAR = re.compile(r"@\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -146,7 +146,7 @@ def _hover_for_node(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     if isinstance(node, SignalRuleNode):
         return _hover_signal(line_text, ch)
     if isinstance(node, FileRuleNode):
-        return _hover_file_rule(line_text, ch)
+        return _hover_file_rule(node, line_text, ch)
     if isinstance(node, ProfileNode):
         return _hover_profile(line_text, ch)
     if isinstance(node, IncludeNode):
@@ -249,7 +249,7 @@ def _hover_signal(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_file_rule(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_file_rule(node: FileRuleNode, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if word in QUALIFIER_DEFS:
         return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
@@ -261,6 +261,13 @@ def _hover_file_rule(line_text: str, ch: int) -> Optional[Hover]:
         )
     if word == "file":
         return _make_hover(KEYWORD_DEFS["file"].doc, ws, we)
+    if node.exec_target and word == node.exec_target:
+        return _make_hover(
+            # exec_target is the designator of a profile name / attachment etc
+            f"**File rule exec target `{word}`**\n\nDesignator for the profile or path attachment to which this `file` rule applies.",
+            ws,
+            we,
+        )
     for pm in RE_FILE_PERMISSIONS.finditer(line_text):
         if pm.start() <= ch <= pm.end():
             return _file_perm_hover(pm.group(1), pm.start(), pm.end())
