@@ -33,5 +33,6 @@ parts:
       - yq
     override-pull: |
       craftctl default
-      # read version from pyproject.toml and set it as the snap version
-      craftctl set version=$(yq ".project.version" pyproject.toml)
+      # read version from pyproject.toml and set it as the snap version along
+      # with the git short hash
+      craftctl set version=$(yq ".project.version" pyproject.toml)-$(git rev-parse --short HEAD)
