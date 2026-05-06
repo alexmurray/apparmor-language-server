@@ -8,7 +8,7 @@ description: |
   to be used with editors that support the Language Server Protocol (LSP), such as
   Visual Studio Code, Vim, and Emacs.
 
-grade: devel # must be 'stable' to release into candidate/stable channels
+grade: stable # must be 'stable' to release into candidate/stable channels
 confinement: strict
 
 apps:
