@@ -815,6 +815,170 @@ class TestGenericRules:
         assert dbus_rules[0].range.start.line < dbus_rules[0].range.end.line
 
 
+# ── Structured fields on rule nodes ───────────────────────────────────────────
+
+
+class TestStructuredFields:
+    """Each rule node exposes its post-keyword body as well-typed fields so
+    consumers can iterate values without re-parsing ``content``."""
+
+    def _rule(self, src: str, kind):
+        doc, errs = parse_document("file:///test.aa", src)
+        assert errs == []
+        rules = [c for c in doc.profiles[0].children if isinstance(c, kind)]
+        assert len(rules) == 1
+        return rules[0]
+
+    def test_ptrace_fields(self):
+        from apparmor_language_server.parser import PtraceRuleNode
+
+        node = self._rule(
+            "profile x {\n  ptrace (read trace) peer=@{profile_name},\n}\n",
+            PtraceRuleNode,
+        )
+        assert node.permissions == ["read", "trace"]
+        assert node.peer == "@{profile_name}"
+        assert list(node.value_strings()) == ["@{profile_name}"]
+
+    def test_dbus_fields(self):
+        from apparmor_language_server.parser import DbusRuleNode
+
+        node = self._rule(
+            'profile x {\n  dbus (send) bus=session path=/org/example interface=org.example.X,\n}\n',
+            DbusRuleNode,
+        )
+        assert node.permissions == ["send"]
+        assert node.bus == "session"
+        assert node.path == "/org/example"
+        assert node.interface == "org.example.X"
+        assert "/org/example" in list(node.value_strings())
+
+    def test_unix_fields(self):
+        from apparmor_language_server.parser import UnixRuleNode
+
+        node = self._rule(
+            "profile x {\n  unix (connect) type=stream addr=@/socket,\n}\n",
+            UnixRuleNode,
+        )
+        assert node.permissions == ["connect"]
+        assert node.type == "stream"
+        assert node.addr == "@/socket"
+
+    def test_mount_fields(self):
+        from apparmor_language_server.parser import MountRuleNode
+
+        node = self._rule(
+            "profile x {\n  mount options=(ro nodev) /dev/sda1 -> /mnt/data,\n}\n",
+            MountRuleNode,
+        )
+        assert "ro" in node.options
+        assert "nodev" in node.options
+        assert node.source == "/dev/sda1"
+        assert node.target == "/mnt/data"
+
+    def test_umount_fields(self):
+        from apparmor_language_server.parser import UmountRuleNode
+
+        node = self._rule(
+            "profile x {\n  umount /mnt/data,\n}\n",
+            UmountRuleNode,
+        )
+        assert node.target == "/mnt/data"
+
+    def test_remount_fields(self):
+        from apparmor_language_server.parser import RemountRuleNode
+
+        node = self._rule(
+            "profile x {\n  remount options=(ro) /mnt/data,\n}\n",
+            RemountRuleNode,
+        )
+        assert "ro" in node.options
+        assert node.target == "/mnt/data"
+
+    def test_io_uring_fields(self):
+        from apparmor_language_server.parser import IoUringRuleNode
+
+        node = self._rule(
+            "profile x {\n  io_uring (sqpoll override_creds),\n}\n",
+            IoUringRuleNode,
+        )
+        assert node.permissions == ["sqpoll", "override_creds"]
+
+    def test_mqueue_fields(self):
+        from apparmor_language_server.parser import MqueueRuleNode
+
+        node = self._rule(
+            "profile x {\n  mqueue (open read) type=posix /myqueue,\n}\n",
+            MqueueRuleNode,
+        )
+        assert node.permissions == ["open", "read"]
+        assert node.type == "posix"
+        assert node.name == "/myqueue"
+
+    def test_rlimit_fields(self):
+        from apparmor_language_server.parser import RlimitRuleNode
+
+        node = self._rule(
+            "profile x {\n  set rlimit nofile <= 1024,\n}\n",
+            RlimitRuleNode,
+        )
+        assert node.resource == "nofile"
+        assert node.value == "1024"
+
+    def test_change_profile_with_arrow(self):
+        from apparmor_language_server.parser import ChangeProfileRuleNode
+
+        node = self._rule(
+            "profile x {\n  change_profile -> /usr/bin/other,\n}\n",
+            ChangeProfileRuleNode,
+        )
+        assert node.exec_path is None
+        assert node.target_profile == "/usr/bin/other"
+
+    def test_change_profile_exec_path(self):
+        from apparmor_language_server.parser import ChangeProfileRuleNode
+
+        node = self._rule(
+            "profile x {\n  change_profile /usr/bin/x -> sub_profile,\n}\n",
+            ChangeProfileRuleNode,
+        )
+        assert node.exec_path == "/usr/bin/x"
+        assert node.target_profile == "sub_profile"
+
+    def test_change_hat_fields(self):
+        from apparmor_language_server.parser import ChangeHatRuleNode
+
+        node = self._rule(
+            "profile x {\n  change_hat DEFAULT,\n}\n",
+            ChangeHatRuleNode,
+        )
+        assert node.hats == ["DEFAULT"]
+
+    def test_pivot_root_fields(self):
+        from apparmor_language_server.parser import PivotRootRuleNode
+
+        node = self._rule(
+            "profile x {\n  pivot_root oldroot=/old /new -> sub,\n}\n",
+            PivotRootRuleNode,
+        )
+        assert node.oldroot == "/old"
+        assert node.newroot == "/new"
+        assert node.target_profile == "sub"
+
+    def test_inline_comment_does_not_pollute_fields(self):
+        """Trailing inline comments must not leak into structured fields."""
+        from apparmor_language_server.parser import DbusRuleNode
+
+        node = self._rule(
+            'profile x {\n  dbus (send) bus=session,  # talk to session bus\n}\n',
+            DbusRuleNode,
+        )
+        assert node.bus == "session"
+        # The comment text must not appear in any value_strings() output
+        for v in node.value_strings():
+            assert "talk to session" not in v
+
+
 # ── Profile structure ─────────────────────────────────────────────────────────
 
 

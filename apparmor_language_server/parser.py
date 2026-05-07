@@ -14,10 +14,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from lsprotocol.types import Position, Range
 
+from ._text import code_end as _code_end
 from .constants import (
     DEFAULT_INCLUDE_SEARCH_DIRS,
     KEYWORD_DEFS,
@@ -94,6 +95,51 @@ RE_FILE_SUFFIX = re.compile(
     )
 )
 RE_ALIAS = re.compile(r"^\s*alias\s+(\S+)\s+->\s+(\S+)\s*,?\s*$")
+
+# ── Generic content extractors ────────────────────────────────────────────────
+# Used when parsing a rule's post-keyword content into structured fields.
+
+_RE_LEADING_PARENS = re.compile(r"^\s*\(([^)]*)\)\s*")
+
+
+def _extract_paren_perms(content: str) -> tuple[list[str], str]:
+    """Extract a leading ``(a b c)`` permission group, if any.
+
+    Returns ``(permissions, remainder)`` where *remainder* is *content* with
+    the leading group removed; if the content does not begin with a paren
+    group, ``permissions`` is empty and *remainder* equals *content*.
+    """
+    m = _RE_LEADING_PARENS.match(content)
+    if not m:
+        return [], content
+    perms = [p for p in m.group(1).replace(",", " ").split() if p]
+    return perms, content[m.end() :]
+
+
+def _extract_kv(content: str, key: str) -> Optional[str]:
+    """Extract ``key=value`` from *content*.
+
+    Value may be parenthesised ``(…)``, double-quoted ``"…"``, or a bare
+    token (terminated by whitespace, comma, or paren). Returns the unquoted
+    value, or ``None`` if the key is absent.
+    """
+    pat = re.compile(rf"\b{re.escape(key)}=(?:\(([^)]*)\)|\"([^\"]*)\"|([^\s,()]+))")
+    m = pat.search(content)
+    if m is None:
+        return None
+    return m.group(1) or m.group(2) or m.group(3)
+
+
+def _split_arrow(content: str) -> tuple[str, Optional[str]]:
+    """Split ``lhs -> rhs`` if present, returning trimmed parts.
+
+    If there is no ``->`` separator, the right-hand side is ``None``.
+    Trailing commas and whitespace are stripped from both sides.
+    """
+    parts = content.split("->", 1)
+    lhs = parts[0].strip().rstrip(",").strip()
+    rhs = parts[1].strip().rstrip(",").strip() if len(parts) > 1 else None
+    return lhs, rhs
 
 
 def _rule_ends_line(line: str) -> bool:
@@ -238,6 +284,16 @@ class VariableDefNode(Node):
 class RuleNode(Node):
     qualifiers: list[str] = field(default_factory=list)
 
+    def value_strings(self) -> Iterator[str]:
+        """Yield every string in this rule that may contain a variable
+        reference (paths, peers, addresses, queue names, …).
+
+        Used by the diagnostics layer to detect undefined ``@{var}``
+        references without re-parsing ``node.raw``. Subclasses override
+        this to expose their structured fields.
+        """
+        return iter(())
+
 
 @dataclass
 class FileRuleNode(RuleNode):
@@ -245,15 +301,28 @@ class FileRuleNode(RuleNode):
     perms: str = ""
     exec_target: Optional[str] = None
 
+    def value_strings(self) -> Iterator[str]:
+        if self.path:
+            yield self.path
+        if self.exec_target:
+            yield self.exec_target
+
 
 @dataclass
 class CapabilityNode(RuleNode):
     capabilities: list[str] = field(default_factory=list)
 
+    # Capabilities are a closed enum — no variable references possible.
+    # Default value_strings (empty) suffices.
+
 
 @dataclass
 class NetworkNode(RuleNode):
     rest: str = ""
+
+    def value_strings(self) -> Iterator[str]:
+        if self.rest:
+            yield self.rest
 
 
 @dataclass
@@ -262,75 +331,161 @@ class SignalRuleNode(RuleNode):
     signal_set: list[str] = field(default_factory=list)
     peer: Optional[str] = None
 
-
-# TODO(structured-fields): These rule types currently carry the post-keyword
-# body as a single freeform ``content: str``. That forces downstream consumers
-# (notably diagnostics._check_var_refs) to scan ``node.raw`` with a
-# comment-stripping heuristic. The cleaner endpoint is per-rule structured
-# fields (peer=, addr=, type=, options=, etc.) so callers can iterate
-# well-typed values rather than reparsing text. Doing so will need a parser
-# change for each type below; ``SignalRuleNode`` and ``LinkRuleNode`` already
-# demonstrate the target shape.
+    def value_strings(self) -> Iterator[str]:
+        if self.peer:
+            yield self.peer
 
 
 @dataclass
 class PtraceRuleNode(RuleNode):
     content: str = ""
+    permissions: list[str] = field(default_factory=list)
+    peer: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        if self.peer:
+            yield self.peer
 
 
 @dataclass
 class DbusRuleNode(RuleNode):
     content: str = ""
+    permissions: list[str] = field(default_factory=list)
+    bus: Optional[str] = None
+    path: Optional[str] = None
+    interface: Optional[str] = None
+    member: Optional[str] = None
+    peer: Optional[str] = None
+    name: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        for v in (
+            self.bus,
+            self.path,
+            self.interface,
+            self.member,
+            self.peer,
+            self.name,
+        ):
+            if v:
+                yield v
 
 
 @dataclass
 class UnixRuleNode(RuleNode):
     content: str = ""
+    permissions: list[str] = field(default_factory=list)
+    type: Optional[str] = None
+    addr: Optional[str] = None
+    peer: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        for v in (self.type, self.addr, self.peer):
+            if v:
+                yield v
 
 
 @dataclass
 class MountRuleNode(RuleNode):
     content: str = ""
+    options: list[str] = field(default_factory=list)
+    fstype: Optional[str] = None
+    source: Optional[str] = None
+    target: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        for v in (self.source, self.target, self.fstype):
+            if v:
+                yield v
+        yield from self.options
 
 
 @dataclass
 class UmountRuleNode(RuleNode):
     content: str = ""
+    options: list[str] = field(default_factory=list)
+    target: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        if self.target:
+            yield self.target
+        yield from self.options
 
 
 @dataclass
 class UsernsRuleNode(RuleNode):
     content: str = ""
 
+    # ``userns,`` carries no value-bearing fields. Default empty suffices.
+
 
 @dataclass
 class IoUringRuleNode(RuleNode):
     content: str = ""
+    permissions: list[str] = field(default_factory=list)
+    label: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        if self.label:
+            yield self.label
 
 
 @dataclass
 class MqueueRuleNode(RuleNode):
     content: str = ""
+    permissions: list[str] = field(default_factory=list)
+    type: Optional[str] = None
+    name: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        for v in (self.type, self.name):
+            if v:
+                yield v
 
 
 @dataclass
 class RlimitRuleNode(RuleNode):
     content: str = ""
+    resource: str = ""
+    value: str = ""
+
+    def value_strings(self) -> Iterator[str]:
+        if self.value:
+            yield self.value
 
 
 @dataclass
 class PivotRootRuleNode(RuleNode):
     content: str = ""
+    oldroot: Optional[str] = None
+    newroot: Optional[str] = None
+    target_profile: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        for v in (self.oldroot, self.newroot, self.target_profile):
+            if v:
+                yield v
 
 
 @dataclass
 class ChangeProfileRuleNode(RuleNode):
     content: str = ""
+    exec_path: Optional[str] = None
+    target_profile: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        for v in (self.exec_path, self.target_profile):
+            if v:
+                yield v
 
 
 @dataclass
 class ChangeHatRuleNode(RuleNode):
     content: str = ""
+    hats: list[str] = field(default_factory=list)
+
+    def value_strings(self) -> Iterator[str]:
+        yield from self.hats
 
 
 @dataclass
@@ -339,21 +494,40 @@ class LinkRuleNode(RuleNode):
     link: str = ""
     target: str = ""
 
+    def value_strings(self) -> Iterator[str]:
+        if self.link:
+            yield self.link
+        if self.target:
+            yield self.target
+
 
 @dataclass
 class AllRuleNode(RuleNode):
-    pass
+    pass  # ``all,`` carries no fields.
 
 
 @dataclass
 class RemountRuleNode(RuleNode):
     content: str = ""
+    options: list[str] = field(default_factory=list)
+    target: Optional[str] = None
+
+    def value_strings(self) -> Iterator[str]:
+        if self.target:
+            yield self.target
+        yield from self.options
 
 
 @dataclass
 class UnknownRuleNode(RuleNode):
     keyword: str = ""
     content: str = ""
+
+    def value_strings(self) -> Iterator[str]:
+        # Fall back to the post-keyword text: we don't know which tokens are
+        # path-like for a rule whose grammar we haven't recognised.
+        if self.content:
+            yield self.content
 
 
 _KEYWORD_TO_NODE_CLASS: dict[str, Any] = {
@@ -371,6 +545,214 @@ _KEYWORD_TO_NODE_CLASS: dict[str, Any] = {
     "link": LinkRuleNode,
     "all": AllRuleNode,
     "remount": RemountRuleNode,
+}
+
+
+# ── Per-type rule builders ────────────────────────────────────────────────────
+# Each builder takes the post-keyword *content* string and the common Node
+# kwargs (range, raw, qualifiers) and returns a fully-populated rule node
+# with its structured fields parsed out. ``content`` is preserved on the
+# resulting node both as a debugging aid and so existing consumers that read
+# the raw body keep working.
+
+
+def _build_ptrace(content: str, **base: Any) -> PtraceRuleNode:
+    perms, rest = _extract_paren_perms(content)
+    if not perms:
+        # Bare permission form: ``ptrace read peer=…`` (no parens).
+        head = rest.split("peer=", 1)[0]
+        perms = [p for p in head.replace(",", " ").split() if p]
+    peer = _extract_kv(content, "peer")
+    return PtraceRuleNode(content=content, permissions=perms, peer=peer, **base)
+
+
+def _build_dbus(content: str, **base: Any) -> DbusRuleNode:
+    perms, _ = _extract_paren_perms(content)
+    return DbusRuleNode(
+        content=content,
+        permissions=perms,
+        bus=_extract_kv(content, "bus"),
+        path=_extract_kv(content, "path"),
+        interface=_extract_kv(content, "interface"),
+        member=_extract_kv(content, "member"),
+        peer=_extract_kv(content, "peer"),
+        name=_extract_kv(content, "name"),
+        **base,
+    )
+
+
+def _build_unix(content: str, **base: Any) -> UnixRuleNode:
+    perms, _ = _extract_paren_perms(content)
+    return UnixRuleNode(
+        content=content,
+        permissions=perms,
+        type=_extract_kv(content, "type"),
+        addr=_extract_kv(content, "addr"),
+        peer=_extract_kv(content, "peer"),
+        **base,
+    )
+
+
+def _build_mountlike(node_cls: type, content: str, **base: Any) -> RuleNode:
+    """Builder shared by mount/umount/remount.
+
+    Parses ``options=(…)``, ``fstype=…`` and the optional
+    ``source -> target`` path pair (umount has no source).
+    """
+    options_str = _extract_kv(content, "options")
+    options = (
+        [o for o in options_str.replace(",", " ").split() if o] if options_str else []
+    )
+    fstype = _extract_kv(content, "fstype")
+    # Strip recognised key=value pairs so what remains is the path component.
+    path_part = re.sub(
+        r"\b(?:options|fstype)=(?:\([^)]*\)|\"[^\"]*\"|\S+)", "", content
+    )
+    lhs, rhs = _split_arrow(path_part)
+    if node_cls is UmountRuleNode:
+        target = (lhs or rhs or "").strip() or None
+        return UmountRuleNode(content=content, options=options, target=target, **base)
+    if node_cls is RemountRuleNode:
+        target = (lhs or rhs or "").strip() or None
+        return RemountRuleNode(content=content, options=options, target=target, **base)
+    # plain mount: lhs is source, rhs is target
+    source = lhs.strip() or None
+    target = rhs.strip() if rhs else None
+    return MountRuleNode(
+        content=content,
+        options=options,
+        fstype=fstype,
+        source=source,
+        target=target,
+        **base,
+    )
+
+
+def _build_mount(content: str, **base: Any) -> MountRuleNode:
+    return _build_mountlike(MountRuleNode, content, **base)  # type: ignore[return-value]
+
+
+def _build_umount(content: str, **base: Any) -> UmountRuleNode:
+    return _build_mountlike(UmountRuleNode, content, **base)  # type: ignore[return-value]
+
+
+def _build_remount(content: str, **base: Any) -> RemountRuleNode:
+    return _build_mountlike(RemountRuleNode, content, **base)  # type: ignore[return-value]
+
+
+def _build_userns(content: str, **base: Any) -> UsernsRuleNode:
+    return UsernsRuleNode(content=content, **base)
+
+
+def _build_io_uring(content: str, **base: Any) -> IoUringRuleNode:
+    perms, _ = _extract_paren_perms(content)
+    return IoUringRuleNode(
+        content=content,
+        permissions=perms,
+        label=_extract_kv(content, "label"),
+        **base,
+    )
+
+
+def _build_mqueue(content: str, **base: Any) -> MqueueRuleNode:
+    perms, rest = _extract_paren_perms(content)
+    type_ = _extract_kv(content, "type")
+    explicit_name = _extract_kv(content, "name")
+    if explicit_name is not None:
+        name = explicit_name
+    else:
+        # Bare path/name appears after `type=…` if present, else after the perms.
+        leftover = re.sub(r"\btype=(?:\"[^\"]*\"|\S+)", "", rest).strip().rstrip(",")
+        name = leftover or None
+    return MqueueRuleNode(
+        content=content,
+        permissions=perms,
+        type=type_,
+        name=name,
+        **base,
+    )
+
+
+def _build_pivot_root(content: str, **base: Any) -> PivotRootRuleNode:
+    oldroot = _extract_kv(content, "oldroot")
+    # Strip oldroot=…, leaving "newroot -> profile" or just "newroot".
+    rest = re.sub(r"\boldroot=(?:\"[^\"]*\"|\S+)", "", content).strip()
+    lhs, rhs = _split_arrow(rest)
+    newroot = lhs or None
+    target_profile = rhs or None
+    return PivotRootRuleNode(
+        content=content,
+        oldroot=oldroot,
+        newroot=newroot,
+        target_profile=target_profile,
+        **base,
+    )
+
+
+def _build_change_profile(content: str, **base: Any) -> ChangeProfileRuleNode:
+    lhs, rhs = _split_arrow(content)
+    if rhs is None:
+        # ``change_profile target,`` — no exec_path component.
+        return ChangeProfileRuleNode(
+            content=content,
+            exec_path=None,
+            target_profile=lhs or None,
+            **base,
+        )
+    return ChangeProfileRuleNode(
+        content=content,
+        exec_path=lhs or None,
+        target_profile=rhs or None,
+        **base,
+    )
+
+
+def _build_change_hat(content: str, **base: Any) -> ChangeHatRuleNode:
+    hats = [h for h in content.replace(",", " ").split() if h]
+    return ChangeHatRuleNode(content=content, hats=hats, **base)
+
+
+def _build_link(content: str, **base: Any) -> LinkRuleNode:
+    subset = content.startswith("subset")
+    rest = content[len("subset") :].strip() if subset else content
+    parts = rest.split("->", 1)
+    link_path = parts[0].strip()
+    target_path = parts[1].strip().rstrip(",") if len(parts) > 1 else ""
+    return LinkRuleNode(subset=subset, link=link_path, target=target_path, **base)
+
+
+def _build_all(content: str, **base: Any) -> AllRuleNode:
+    # ``all,`` has no body. Drop the content kwarg.
+    return AllRuleNode(**base)
+
+
+def _build_rlimit(content: str, **base: Any) -> RlimitRuleNode:
+    # content is e.g. "rlimit nofile <= 1024"
+    body = content.removeprefix("rlimit").strip()
+    resource, _, value = body.partition("<=")
+    return RlimitRuleNode(
+        content=content,
+        resource=resource.strip(),
+        value=value.strip().rstrip(",").strip(),
+        **base,
+    )
+
+
+_BUILDERS: dict[type, Any] = {
+    PtraceRuleNode: _build_ptrace,
+    DbusRuleNode: _build_dbus,
+    UnixRuleNode: _build_unix,
+    MountRuleNode: _build_mount,
+    UmountRuleNode: _build_umount,
+    RemountRuleNode: _build_remount,
+    UsernsRuleNode: _build_userns,
+    IoUringRuleNode: _build_io_uring,
+    MqueueRuleNode: _build_mqueue,
+    PivotRootRuleNode: _build_pivot_root,
+    ChangeProfileRuleNode: _build_change_profile,
+    ChangeHatRuleNode: _build_change_hat,
+    LinkRuleNode: _build_link,
+    AllRuleNode: _build_all,
 }
 
 
@@ -878,8 +1260,14 @@ class Parser:
         end_line = self._pos - 1
         raw = "\n".join(raw_lines)
         # Normalise for regex matching: strip each line and join with a space
-        # so that multi-line rules look like a single logical line.
-        joined = " ".join(line.strip() for line in raw_lines)
+        # so that multi-line rules look like a single logical line. Inline
+        # comments (``rule, # explanation``) are dropped here so that they
+        # don't leak into structured fields like dbus path= or unknown-rule
+        # content; the original raw_lines are retained on ``raw`` unchanged.
+        joined = " ".join(
+            stripped[: _code_end(stripped)].rstrip()
+            for stripped in (line.strip() for line in raw_lines)
+        )
 
         # -- Capability --
         mc = RE_CAPABILITY.match(joined)
@@ -973,35 +1361,12 @@ class Parser:
         # "set rlimit" is a two-word keyword; detect by first two tokens.
         if keyword == "set" and content.startswith("rlimit"):
             logger.debug("RlimitRuleNode: %s (line %d)", content, start_line)
-            return RlimitRuleNode(range=rng, raw=raw, qualifiers=quals, content=content)
+            return _build_rlimit(content, range=rng, raw=raw, qualifiers=quals)
 
-        node_class = _KEYWORD_TO_NODE_CLASS.get(keyword)
-        if node_class is not None:
-            if node_class is LinkRuleNode:
-                subset = content.startswith("subset")
-                rest = content[len("subset") :].strip() if subset else content
-                parts = rest.split("->")
-                link_path = parts[0].strip() if parts else ""
-                target_path = parts[1].strip().rstrip(",") if len(parts) > 1 else ""
-                logger.debug(
-                    "LinkRuleNode: %s -> %s (line %d)",
-                    link_path,
-                    target_path,
-                    start_line,
-                )
-                return LinkRuleNode(
-                    range=rng,
-                    raw=raw,
-                    qualifiers=quals,
-                    subset=subset,
-                    link=link_path,
-                    target=target_path,
-                )
-            if node_class is AllRuleNode:
-                logger.debug("AllRuleNode (line %d)", start_line)
-                return AllRuleNode(range=rng, raw=raw, qualifiers=quals)
-            logger.debug("%s: %s (line %d)", node_class.__name__, keyword, start_line)
-            return node_class(range=rng, raw=raw, qualifiers=quals, content=content)
+        builder = _BUILDERS.get(_KEYWORD_TO_NODE_CLASS.get(keyword))
+        if builder is not None:
+            logger.debug("%s: %s (line %d)", builder.__name__, keyword, start_line)
+            return builder(content, range=rng, raw=raw, qualifiers=quals)
 
         logger.debug("UnknownRuleNode: keyword=%s (line %d)", keyword, start_line)
         return UnknownRuleNode(

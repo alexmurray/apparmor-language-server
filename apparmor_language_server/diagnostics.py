@@ -39,7 +39,6 @@ from lsprotocol.types import (
     Range,
 )
 
-from ._text import code_end
 from .constants import (
     CAPABILITIES,
     EXECUTE_PERMISSIONS,
@@ -75,6 +74,7 @@ from .parser import (
     ProfileNode,
     PtraceRuleNode,
     RemountRuleNode,
+    RuleNode,
     RlimitRuleNode,
     SignalRuleNode,
     UmountRuleNode,
@@ -627,23 +627,17 @@ def _check_include(node: Node, ctx: DiagContext) -> None:
 def _check_var_refs(node: Node, ctx: DiagContext) -> None:
     """Flag any @{…} reference in *node* that isn't defined in scope.
 
-    Scans every line of node.raw with trailing comments stripped via
-    code_end, so a comment like "# use @{HOME}" no longer false-positives,
-    while real references in any structured field (path, exec_target,
-    peer=, addr=, …) are caught uniformly across rule types.
-
-    TODO(structured-fields): This is the raw-text scanning implementation.
-    The cleaner long-term answer is to iterate the rule's structured fields
-    directly — but most rule types currently store their post-keyword body
-    as a single ``content: str`` (see the matching TODO above the freeform
-    RuleNode declarations in parser.py). Once those types grow real fields,
-    this function should iterate ``getattr(node, name)`` for each declared
-    value-bearing field and stop relying on raw-text scanning at all. The
-    ``code_end`` heuristic and the ``seen`` set below would then go away.
+    Iterates the rule's structured value-bearing fields via
+    ``RuleNode.value_strings`` rather than scanning the raw source text, so
+    a reference inside a trailing comment (``# use @{HOME}``) is naturally
+    ignored and there's no risk of mis-attributing tokens to the wrong
+    field. Each undefined variable is reported at most once per node.
     """
+    if not isinstance(node, RuleNode):
+        return
     seen: set[str] = set()
-    for line in node.raw.splitlines():
-        for var_ref in _VAR_REF.findall(line[: code_end(line)]):
+    for value in node.value_strings():
+        for var_ref in _VAR_REF.findall(value):
             if var_ref in seen or var_ref in ctx.defined_vars:
                 continue
             seen.add(var_ref)
