@@ -34,23 +34,14 @@ from .constants import DEFAULT_INDENT
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-_RE_TRAILING = re.compile(r"\s+$")
-_RE_RULE_KW = re.compile(
-    r"^(\s*)(deny\s+|audit\s+|owner\s+)?"
-    r"(capability|network|signal|ptrace|mount|umount|remount|pivot_root|"
-    r"unix|dbus|file|link|change_profile|change_hat|rlimit|userns|"
-    r"io_uring|mqueue)\b"
-)
 _RE_CAPABILITY_RULE = re.compile(
     r"^(\s*(?:deny\s+|audit\s+)?capability)\s+([\w][\w,\s]*?)\s*(,?)\s*$"
 )
 _RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
 _RE_BLANK = re.compile(r"^\s*$")
-_RE_PROFILE_OPEN = re.compile(r"^(\s*)(profile|hat)\s+")
 _RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*$")
 _RE_INCLUDE_HASH = re.compile(r"^(\s*)#include\b")
 _RE_ENDS_COMMA = re.compile(r",\s*$")
-_RE_NO_TERM = re.compile(r"(?<!,)\s*$")
 
 # Lines that should NOT get a trailing comma added:
 _NO_COMMA_PATTERNS = [

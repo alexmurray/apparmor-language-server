@@ -128,6 +128,18 @@ def _diag(
     )
 
 
+def _add(
+    diags: dict[str, list[Diagnostic]],
+    uri: str,
+    node: Node,
+    message: str,
+    severity: DiagnosticSeverity = DiagnosticSeverity.Error,
+    code: Optional[str] = None,
+) -> None:
+    """Convenience: build a Diagnostic for *node* and route it under *uri*."""
+    diags.setdefault(uri, []).append(_diag(node, message, severity, code))
+
+
 # ── apparmor_parser integration ───────────────────────────────────────────────
 
 
@@ -329,25 +341,25 @@ def _check_profile(
     for flag in node.flags:
         flag_name = flag.split("=")[0].strip()
         if flag_name and flag_name not in PROFILE_FLAGS:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown profile flag '{flag_name}'.",
-                    DiagnosticSeverity.Error,
-                    "unknown-flag",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown profile flag '{flag_name}'.",
+                DiagnosticSeverity.Error,
+                "unknown-flag",
             )
 
     # Empty body warning
     non_comment_children = [c for c in node.children if not isinstance(c, CommentNode)]
     if not non_comment_children:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"Profile '{node.name}' has an empty body.",
-                DiagnosticSeverity.Warning,
-                "empty-profile",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            f"Profile '{node.name}' has an empty body.",
+            DiagnosticSeverity.Warning,
+            "empty-profile",
         )
 
     # Duplicate capability declarations within same profile
@@ -361,13 +373,13 @@ def _check_profile(
                     deny_caps.add(cap)
                 else:
                     if cap in seen_caps:
-                        diags.setdefault(uri, []).append(
-                            _diag(
-                                child,
-                                f"Capability '{cap}' is declared more than once.",
-                                DiagnosticSeverity.Warning,
-                                "duplicate-capability",
-                            )
+                        _add(
+                            diags,
+                            uri,
+                            child,
+                            f"Capability '{cap}' is declared more than once.",
+                            DiagnosticSeverity.Warning,
+                            "duplicate-capability",
                         )
                     else:
                         seen_caps[cap] = child
@@ -375,13 +387,13 @@ def _check_profile(
     # deny + allow same cap
     conflict = set(seen_caps.keys()) & deny_caps
     for cap in conflict:
-        diags.setdefault(uri, []).append(
-            _diag(
-                seen_caps[cap],
-                f"Capability '{cap}' is both allowed and denied in this profile.",
-                DiagnosticSeverity.Warning,
-                "conflicting-capability",
-            )
+        _add(
+            diags,
+            uri,
+            seen_caps[cap],
+            f"Capability '{cap}' is both allowed and denied in this profile.",
+            DiagnosticSeverity.Warning,
+            "conflicting-capability",
         )
 
     # Recurse
@@ -401,14 +413,13 @@ def _check_capability(
     for cap in node.capabilities:
         c = cap.strip().lower()
         if c and c not in CAPABILITIES:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown capability '{cap}'. "
-                    "Check the list of Linux capabilities.",
-                    DiagnosticSeverity.Error,
-                    "unknown-capability",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown capability '{cap}'. Check the list of Linux capabilities.",
+                DiagnosticSeverity.Error,
+                "unknown-capability",
             )
 
 
@@ -434,14 +445,14 @@ def _check_network(
         if not p or "=" in p:
             continue
         if p not in _VALID_NETWORK_TOKENS:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown network qualifier '{part}'. Expected a family "
-                    "(e.g. inet, inet6), type (e.g. stream, dgram), or access permission.",
-                    DiagnosticSeverity.Warning,
-                    "unknown-network-qualifier",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown network qualifier '{part}'. Expected a family "
+                "(e.g. inet, inet6), type (e.g. stream, dgram), or access permission.",
+                DiagnosticSeverity.Warning,
+                "unknown-network-qualifier",
             )
 
 
@@ -453,23 +464,23 @@ def _check_signal(
 ) -> None:
     for perm in node.permissions:
         if perm.lower() not in SIGNAL_PERMISSIONS:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown signal permission '{perm}'. Expected one of: {', '.join(SIGNAL_PERMISSIONS)}.",
-                    DiagnosticSeverity.Warning,
-                    "unknown-signal-permission",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown signal permission '{perm}'. Expected one of: {', '.join(SIGNAL_PERMISSIONS)}.",
+                DiagnosticSeverity.Warning,
+                "unknown-signal-permission",
             )
     for name in node.signal_set:
         if name.lower() not in SIGNAL_NAMES and not _RE_RTMIN.match(name.lower()):
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown signal name '{name}'. Expected a signal name such as term, kill, hup.",
-                    DiagnosticSeverity.Warning,
-                    "unknown-signal-name",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown signal name '{name}'. Expected a signal name such as term, kill, hup.",
+                DiagnosticSeverity.Warning,
+                "unknown-signal-name",
             )
 
 
@@ -491,13 +502,13 @@ def _check_ptrace(
     for perm in perms:
         p = perm.strip().lower()
         if p and p not in PTRACE_PERMISSIONS:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unknown ptrace permission '{perm}'. Expected one of: {', '.join(PTRACE_PERMISSIONS)}.",
-                    DiagnosticSeverity.Warning,
-                    "unknown-ptrace-permission",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown ptrace permission '{perm}'. Expected one of: {', '.join(PTRACE_PERMISSIONS)}.",
+                DiagnosticSeverity.Warning,
+                "unknown-ptrace-permission",
             )
 
 
@@ -513,103 +524,103 @@ def _check_file_rule(
     defined_vars: set[str],
 ) -> None:
     perm_str = node.perms
+    exec_modes = _RE_EXEC_MODES.findall(perm_str)
 
-    # Warn about dangerous unconfined exec
-    for dp in _DANGEROUS_PERMS:
-        if dp in perm_str:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Permission '{dp}' allows unconfined execution — "
-                    "consider using 'px' or 'cx' with a named profile instead.",
-                    DiagnosticSeverity.Warning,
-                    "dangerous-exec",
-                )
-            )
-            break
+    # Warn about dangerous unconfined exec — match the actual exec mode rather
+    # than checking for substring containment, otherwise something like "rux"
+    # (not a valid mode) would still trigger via the "ux" substring.
+    dangerous = next((m for m in exec_modes if m in _DANGEROUS_PERMS), None)
+    if dangerous is not None:
+        _add(
+            diags,
+            uri,
+            node,
+            f"Permission '{dangerous}' allows unconfined execution — "
+            "consider using 'px' or 'cx' with a named profile instead.",
+            DiagnosticSeverity.Warning,
+            "dangerous-exec",
+        )
 
     # 'w' (write) and 'a' (append) are mutually exclusive
     if "w" in perm_str and "a" in perm_str:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                "File permissions 'w' (write) and 'a' (append) are mutually exclusive.",
-                DiagnosticSeverity.Error,
-                "perm-conflict-write-append",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            "File permissions 'w' (write) and 'a' (append) are mutually exclusive.",
+            DiagnosticSeverity.Error,
+            "perm-conflict-write-append",
         )
-
-    exec_modes = _RE_EXEC_MODES.findall(perm_str)
 
     # Only one exec transition mode is allowed per rule
     if len(exec_modes) > 1:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"Multiple exec transition modes ({', '.join(exec_modes)}) are mutually exclusive — only one is allowed per rule.",
-                DiagnosticSeverity.Error,
-                "multiple-exec-modes",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            f"Multiple exec transition modes ({', '.join(exec_modes)}) are mutually exclusive — only one is allowed per rule.",
+            DiagnosticSeverity.Error,
+            "multiple-exec-modes",
         )
 
     # An exec target ('-> profile') requires an exec transition mode
     if node.exec_target is not None and not exec_modes:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"Exec target '-> {node.exec_target}' requires an exec transition permission (e.g. px, cx, ix).",
-                DiagnosticSeverity.Error,
-                "exec-target-without-transition",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            f"Exec target '-> {node.exec_target}' requires an exec transition permission (e.g. px, cx, ix).",
+            DiagnosticSeverity.Error,
+            "exec-target-without-transition",
         )
 
     # Exec transition modes are incompatible with the deny qualifier
     if "deny" in node.qualifiers and exec_modes:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"Exec transition mode '{exec_modes[0]}' is incompatible with the 'deny' qualifier. "
-                "Use 'deny x' to deny execute permission.",
-                DiagnosticSeverity.Error,
-                "deny-with-exec-transition",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            f"Exec transition mode '{exec_modes[0]}' is incompatible with the 'deny' qualifier. "
+            "Use 'deny x' to deny execute permission.",
+            DiagnosticSeverity.Error,
+            "deny-with-exec-transition",
         )
 
     # Bare 'x' is only valid with the deny qualifier
     bare_perms = _RE_EXEC_MODES.sub("", perm_str)
     if "x" in bare_perms and "deny" not in node.qualifiers:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                "Bare 'x' (execute) is only valid with the 'deny' qualifier. "
-                "Use an exec transition mode such as 'ix', 'px', or 'cx' instead.",
-                DiagnosticSeverity.Error,
-                "bare-x-without-deny",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            "Bare 'x' (execute) is only valid with the 'deny' qualifier. "
+            "Use an exec transition mode such as 'ix', 'px', or 'cx' instead.",
+            DiagnosticSeverity.Error,
+            "bare-x-without-deny",
         )
 
     # Warn about 'w' that should probably be 'a' (append)
     if "w" in perm_str and node.path.endswith((".log", ".out", ".txt")):
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"'{node.path}' looks like a log/output file. "
-                "Consider using 'a' (append) instead of 'w' (write).",
-                DiagnosticSeverity.Information,
-                "prefer-append",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            f"'{node.path}' looks like a log/output file. "
+            "Consider using 'a' (append) instead of 'w' (write).",
+            DiagnosticSeverity.Information,
+            "prefer-append",
         )
 
     # Undefined variable references in path
     for var_ref in _VAR_REF.findall(node.path):
         if var_ref not in defined_vars:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Variable '{var_ref}' is used but never defined.",
-                    DiagnosticSeverity.Warning,
-                    "undefined-variable",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Variable '{var_ref}' is used but never defined.",
+                DiagnosticSeverity.Warning,
+                "undefined-variable",
             )
 
 
@@ -624,13 +635,13 @@ def _check_abi(
 ) -> None:
     resolved = resolve_include_path(node.path, uri, search_dirs)
     if resolved is None:
-        diags.setdefault(uri, []).append(
-            _diag(
-                node,
-                f"ABI target '{node.path}' could not be found on disk.",
-                DiagnosticSeverity.Warning,
-                "missing-abi",
-            )
+        _add(
+            diags,
+            uri,
+            node,
+            f"ABI target '{node.path}' could not be found on disk.",
+            DiagnosticSeverity.Warning,
+            "missing-abi",
         )
 
 
@@ -647,13 +658,13 @@ def _check_include(
     if resolved is None:
         # only an error if the include is not conditional
         if not node.conditional:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Include target '{node.path}' could not be found on disk.",
-                    DiagnosticSeverity.Warning,
-                    "missing-include",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Include target '{node.path}' could not be found on disk.",
+                DiagnosticSeverity.Warning,
+                "missing-include",
             )
 
 
@@ -668,13 +679,13 @@ def _check_var_refs(
 ) -> None:
     for var_ref in _VAR_REF.findall(node.raw):
         if var_ref not in defined_vars:
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Variable '{var_ref}' is used but never defined.",
-                    DiagnosticSeverity.Warning,
-                    "undefined-variable",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Variable '{var_ref}' is used but never defined.",
+                DiagnosticSeverity.Warning,
+                "undefined-variable",
             )
 
 
@@ -690,13 +701,13 @@ def _check_unknown_rule(
 
     if kw not in KEYWORD_DEFS:
         if not kw.startswith("/") and not kw.startswith("@"):
-            diags.setdefault(uri, []).append(
-                _diag(
-                    node,
-                    f"Unrecognised rule keyword '{node.keyword}'.",
-                    DiagnosticSeverity.Warning,
-                    "unknown-keyword",
-                )
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unrecognised rule keyword '{node.keyword}'.",
+                DiagnosticSeverity.Warning,
+                "unknown-keyword",
             )
 
     _check_var_refs(node, diags, uri, defined_vars)

@@ -80,6 +80,7 @@ from lsprotocol.types import (
 from pygls.lsp.server import LanguageServer
 
 from .completions import get_completions
+from .constants import DEFAULT_INCLUDE_SEARCH_DIRS
 from .diagnostics import get_diagnostics
 from .formatting import FormatterOptions, format_document
 from .hover import get_hover
@@ -103,11 +104,6 @@ from .parser import (
 logger = logging.getLogger(__name__)
 
 # ── Settings ──────────────────────────────────────────────────────────────────
-
-_DEFAULT_SEARCH_DIRS: list[Path] = [
-    Path("/etc/apparmor.d"),
-    Path("/usr/share/apparmor"),
-]
 
 
 @dataclass
@@ -188,7 +184,7 @@ class AppArmorLanguageServer(LanguageServer):
             extra = [Path(p) for p in self._settings.include_search_paths if p]
         if not extra:
             return None
-        return extra + _DEFAULT_SEARCH_DIRS
+        return extra + DEFAULT_INCLUDE_SEARCH_DIRS
 
     def _get_apparmor_parser_path(self) -> str:
         with self._settings_lock:
@@ -547,23 +543,27 @@ def definition(
                             start=Position(
                                 profile.range.start.line, profile.range.start.character
                             ),
-                            end=Position(profile.range.start.line, 999),
+                            end=Position(
+                                profile.range.start.line, profile.range.end.character
+                            ),
                         ),
                     )
                 ]
 
-        for uri, vars in doc.all_variables.items():
+        for def_uri, vars in doc.all_variables.items():
             for name, var in vars.items():
                 if name == word:
                     return [
                         Location(
-                            uri=uri,
+                            uri=def_uri,
                             range=Range(
                                 start=Position(
                                     var.range.start.line,
                                     var.range.start.character,
                                 ),
-                                end=Position(var.range.start.line, 999),
+                                end=Position(
+                                    var.range.start.line, var.range.end.character
+                                ),
                             ),
                         )
                     ]
@@ -688,12 +688,10 @@ def document_symbols(
 def _profile_to_symbol(profile: ProfileNode) -> DocumentSymbol:
     r = Range(
         start=Position(profile.range.start.line, 0),
-        end=Position(profile.range.end.line, 999),
+        end=Position(profile.range.end.line, profile.range.end.character),
     )
     children = [
-        _node_to_symbol(c)
-        for c in profile.children
-        if not isinstance(c, type(None)) and _node_to_symbol(c) is not None
+        s for s in (_node_to_symbol(c) for c in profile.children) if s is not None
     ]
     return DocumentSymbol(
         name=profile.name or "(anonymous)",
@@ -701,14 +699,14 @@ def _profile_to_symbol(profile: ProfileNode) -> DocumentSymbol:
         range=r,
         selection_range=r,
         detail="hat" if profile.is_hat else "profile",
-        children=[c for c in children if c],
+        children=children,
     )
 
 
 def _node_to_symbol(node: Node) -> Optional[DocumentSymbol]:
     r = Range(
         start=Position(node.range.start.line, 0),
-        end=Position(node.range.end.line, 999),
+        end=Position(node.range.end.line, node.range.end.character),
     )
     if isinstance(node, ProfileNode):
         return _profile_to_symbol(node)
@@ -774,7 +772,10 @@ def workspace_symbols(
                             uri=uri,
                             range=Range(
                                 start=Position(profile.range.start.line, 0),
-                                end=Position(profile.range.start.line, 999),
+                                end=Position(
+                                    profile.range.start.line,
+                                    len(profile.raw),
+                                ),
                             ),
                         ),
                     )

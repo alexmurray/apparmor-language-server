@@ -7,6 +7,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from itertools import chain, combinations
+from pathlib import Path
+
+# ── Search paths ──────────────────────────────────────────────────────────────
+# Directories searched when resolving #include / #abi targets that don't
+# resolve relative to the current document. Override via the
+# `apparmor.includeSearchPaths` workspace setting.
+
+DEFAULT_INCLUDE_SEARCH_DIRS: list[Path] = [
+    Path("/etc/apparmor.d"),
+    Path("/usr/share/apparmor"),
+]
 
 # ── KeywordDef ────────────────────────────────────────────────────────────────
 
@@ -265,12 +276,13 @@ NETWORK_TYPES: list[str] = [
     "packet",
 ]
 
+# "raw" is also a NETWORK_TYPES entry; intentionally omitted here so that
+# completion / hover don't surface the same token twice.
 NETWORK_PROTOCOLS: list[str] = [
     "tcp",
     "udp",
     "icmp",
     "icmpv6",
-    "raw",
 ]
 
 # ── Unix socket ───────────────────────────────────────────────────────────────

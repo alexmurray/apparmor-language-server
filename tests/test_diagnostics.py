@@ -126,6 +126,13 @@ class TestFileRuleDiagnostics:
         src = "profile x {\n  /usr/bin/sudo ux,\n}\n"
         assert "dangerous-exec" in _codes(src)
 
+    def test_dangerous_exec_no_false_positive_on_rwx(self):
+        """'rwx' has no exec transition mode; only the bare-x diagnostic should
+        fire — historic substring match incorrectly flagged it as dangerous."""
+        src = "profile x {\n  deny /usr/bin/foo rwx,\n}\n"
+        codes = _codes(src)
+        assert "dangerous-exec" not in codes
+
     def test_prefer_append_suggestion(self):
         src = "profile x {\n  /var/log/myapp.log w,\n}\n"
         assert "prefer-append" in _codes(src)

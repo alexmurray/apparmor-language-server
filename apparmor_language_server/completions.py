@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +39,7 @@ from .constants import (
     CAPABILITIES,
     DBUS_BUSES,
     DBUS_PERMISSIONS,
+    DEFAULT_INCLUDE_SEARCH_DIRS,
     KEYWORD_DEFS,
     MOUNT_OPTIONS,
     NETWORK_DOMAINS,
@@ -228,8 +230,8 @@ def get_completions(
         logger.debug(
             f"Filesystem path completion triggered with partial: '{partial_path}'"
         )
-        items = _complete_filesystem_path(partial_path, doc)
-        return CompletionList(is_incomplete=True, items=items)
+        items, truncated = _complete_filesystem_path(partial_path, doc)
+        return CompletionList(is_incomplete=truncated, items=items)
 
     # ── Qualifier shorthand ────────────────────────────────────────────────
     if _RE_QUALIFIERS.match(prefix):
@@ -345,10 +347,31 @@ def _complete_file_permissions(partial: str) -> list[CompletionItem]:
 
 # ── Include path completions ──────────────────────────────────────────────────
 
-_DEFAULT_SEARCH_DIRS: list[Path] = [
-    Path("/etc/apparmor.d"),
-    Path("/usr/share/apparmor"),
-]
+# Walking /etc/apparmor.d takes ~tens of ms and runs on every keystroke that
+# triggers include-path completion. Cache the listing per (base, glob) for a
+# short TTL so most completion requests just hit memory. The directory itself
+# is also inotify-watched by WorkspaceIndexer for the workspace case, but the
+# system search dirs here may not be — a TTL is the simpler bound.
+_RGLOB_TTL_SECONDS = 30.0
+_rglob_cache: dict[tuple[Path, str], tuple[float, list[str]]] = {}
+
+
+def _cached_rglob_files(base: Path, pattern: str) -> list[str]:
+    """Return file paths under *base* matching *pattern*, relative to *base*."""
+    key = (base, pattern)
+    now = time.monotonic()
+    cached = _rglob_cache.get(key)
+    if cached is not None and now - cached[0] < _RGLOB_TTL_SECONDS:
+        return cached[1]
+    rels: list[str] = []
+    try:
+        for entry in base.rglob(pattern):
+            if entry.is_file():
+                rels.append(str(entry.relative_to(base)))
+    except (OSError, PermissionError):
+        pass
+    _rglob_cache[key] = (now, rels)
+    return rels
 
 
 def _complete_abi_paths(
@@ -363,25 +386,20 @@ def _complete_abi_paths(
     items: list[CompletionItem] = []
     seen: set[str] = set()
 
-    for base in search_dirs if search_dirs is not None else _DEFAULT_SEARCH_DIRS:
+    for base in search_dirs if search_dirs is not None else DEFAULT_INCLUDE_SEARCH_DIRS:
         if not base.is_dir():
             continue
-        try:
-            for entry in base.rglob("abi/*"):
-                if entry.is_file():
-                    rel = str(entry.relative_to(base))
-                    if rel not in seen and (not partial or rel.startswith(partial)):
-                        items.append(
-                            CompletionItem(
-                                label=rel,
-                                kind=CompletionItemKind.File,
-                                detail=str(base),
-                                insert_text=rel,
-                            )
-                        )
-                        seen.add(rel)
-        except PermissionError:
-            pass
+        for rel in _cached_rglob_files(base, "abi/*"):
+            if rel not in seen and (not partial or rel.startswith(partial)):
+                items.append(
+                    CompletionItem(
+                        label=rel,
+                        kind=CompletionItemKind.File,
+                        detail=str(base),
+                        insert_text=rel,
+                    )
+                )
+                seen.add(rel)
 
     return items
 
@@ -399,25 +417,20 @@ def _complete_include_paths(
     seen: set[str] = set()
 
     # 1. Files on disk under search dirs
-    for base in search_dirs if search_dirs is not None else _DEFAULT_SEARCH_DIRS:
+    for base in search_dirs if search_dirs is not None else DEFAULT_INCLUDE_SEARCH_DIRS:
         if not base.is_dir():
             continue
-        try:
-            for entry in base.rglob("*"):
-                if entry.is_file():
-                    rel = str(entry.relative_to(base))
-                    if rel not in seen and (not partial or rel.startswith(partial)):
-                        items.append(
-                            CompletionItem(
-                                label=rel,
-                                kind=CompletionItemKind.File,
-                                detail=str(base),
-                                insert_text=rel,
-                            )
-                        )
-                        seen.add(rel)
-        except PermissionError:
-            pass
+        for rel in _cached_rglob_files(base, "*"):
+            if rel not in seen and (not partial or rel.startswith(partial)):
+                items.append(
+                    CompletionItem(
+                        label=rel,
+                        kind=CompletionItemKind.File,
+                        detail=str(base),
+                        insert_text=rel,
+                    )
+                )
+                seen.add(rel)
 
     # 2. Relative to document dir
     doc_path = Path(doc_uri.removeprefix("file://"))
@@ -447,24 +460,39 @@ def _complete_include_paths(
 # ── Filesystem path completion ────────────────────────────────────────────────
 
 
-def _complete_filesystem_path(partial: str, doc: DocumentNode) -> list[CompletionItem]:
+_FS_PATH_LIMIT = 80
+
+
+def _complete_filesystem_path(
+    partial: str, doc: DocumentNode
+) -> tuple[list[CompletionItem], bool]:
     """
     Complete filesystem paths for file rules.
     Completes against the real filesystem plus known AppArmor path globs.
+
+    Returns (items, truncated) so the caller can set ``is_incomplete=True``
+    and let the client request more results as the user types.
     """
     items: list[CompletionItem] = []
 
     # Variable-prefixed paths – just offer var names
     if partial.startswith("@"):
-        return _complete_variables(partial[2:] if partial.startswith("@{") else "", doc)
+        return (
+            _complete_variables(partial[2:] if partial.startswith("@{") else "", doc),
+            False,
+        )
 
-    # Real filesystem
+    truncated = False
     try:
         parent = Path(partial).parent
         if not parent.is_absolute():
             parent = Path("/") / parent
         if parent.is_dir():
-            for entry in sorted(parent.iterdir())[:80]:  # cap to avoid flooding
+            entries = sorted(parent.iterdir())
+            if len(entries) > _FS_PATH_LIMIT:
+                truncated = True
+                entries = entries[:_FS_PATH_LIMIT]
+            for entry in entries:
                 label = str(entry)
                 if label.startswith(partial):
                     kind = (
@@ -483,7 +511,7 @@ def _complete_filesystem_path(partial: str, doc: DocumentNode) -> list[Completio
     except (PermissionError, OSError):
         pass
 
-    return items
+    return items, truncated
 
 
 # ── Variable completions ──────────────────────────────────────────────────────

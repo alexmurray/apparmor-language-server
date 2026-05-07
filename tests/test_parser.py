@@ -1014,6 +1014,22 @@ class TestParserIncludedDocs:
         assert (inc_dir / "base").as_uri() in uris
         assert (inc_dir / "net").as_uri() in uris
 
+    def test_include_cycle_does_not_recurse_indefinitely(self, tmp_path):
+        """A → B → A should be parsed once each, not loop forever."""
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.write_text(f'include "{b.name}"\n')
+        b.write_text(f'include "{a.name}"\n')
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(
+            parent_uri,
+            f'include "{a.name}"\nprofile x {{ }}\n',
+            search_dirs=[tmp_path],
+        )
+        p.parse()  # must terminate
+        assert a.as_uri() in p.included_docs
+        assert b.as_uri() in p.included_docs
+
     def test_missing_include_error_uri_is_parent_doc(self, tmp_path):
         """A missing non-conditional include should produce a ParseError whose
         uri is the parent document's URI (not the bare include path), so the

@@ -18,7 +18,13 @@ from typing import Any, Optional
 
 from lsprotocol.types import Position, Range
 
-from .constants import KEYWORD_DEFS, QUALIFIERS, RE_FILE_PERMISSIONS, SIGNAL_PERMISSIONS
+from .constants import (
+    DEFAULT_INCLUDE_SEARCH_DIRS,
+    KEYWORD_DEFS,
+    QUALIFIERS,
+    RE_FILE_PERMISSIONS,
+    SIGNAL_PERMISSIONS,
+)
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -426,6 +432,7 @@ class Parser:
         uri: str,
         text: str,
         search_dirs: Optional[list[Path]] = None,
+        _visited: Optional[set[Path]] = None,
     ):
         self._uri = uri
         self._lines = text.splitlines()
@@ -434,6 +441,9 @@ class Parser:
         self.errors: list[ParseError] = []
         self.included_docs: dict[str, tuple[DocumentNode, list[ParseError]]] = {}
         self._search_dirs = search_dirs
+        # Set of resolved absolute paths already being parsed in this include
+        # chain. Shared with sub-parsers to break #include cycles.
+        self._visited: set[Path] = _visited if _visited is not None else set()
 
     # ── Entry point ───────────────────────────────────────────────────────────
 
@@ -513,10 +523,23 @@ class Parser:
             for entry in path.iterdir():
                 docs.extend(self._parse_include_path(entry))
         except NotADirectoryError:
-            with open(path, "r") as f:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            if resolved in self._visited:
+                logger.debug("Skipping cyclic include: %s", resolved)
+                return docs
+            self._visited.add(resolved)
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read()
             uri = path.as_uri()
-            sub_parser = Parser(uri=uri, text=text, search_dirs=self._search_dirs)
+            sub_parser = Parser(
+                uri=uri,
+                text=text,
+                search_dirs=self._search_dirs,
+                _visited=self._visited,
+            )
             doc = sub_parser.parse()
             docs.append(doc)
             self.included_docs[uri] = (doc, sub_parser.errors)
@@ -1003,10 +1026,7 @@ def resolve_include_path(
 ) -> Optional[Path]:
     """Resolve an include path to an absolute filesystem path."""
     if search_dirs is None:
-        search_dirs = [
-            Path("/etc/apparmor.d"),
-            Path("/usr/share/apparmor"),
-        ]
+        search_dirs = DEFAULT_INCLUDE_SEARCH_DIRS
 
     candidate = Path(include_path)
 
