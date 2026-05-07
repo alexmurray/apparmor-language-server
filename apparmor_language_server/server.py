@@ -117,6 +117,7 @@ class Settings:
     diagnostics_enable: bool = True
     include_search_paths: list[str] = _field(default_factory=list)
     profiles_subdir: str = "apparmor.d"
+    apparmor_parser_path: str = ""
 
     @classmethod
     def from_raw(cls, raw: object) -> "Settings":
@@ -138,6 +139,9 @@ class Settings:
         subdir = apparmor.get("profilesSubdir", "apparmor.d")
         if isinstance(subdir, str):
             s.profiles_subdir = subdir
+        parser_path = apparmor.get("apparmorParserPath", "")
+        if isinstance(parser_path, str):
+            s.apparmor_parser_path = parser_path
         return s
 
 
@@ -186,6 +190,18 @@ class AppArmorLanguageServer(LanguageServer):
             return None
         return extra + _DEFAULT_SEARCH_DIRS
 
+    def _get_apparmor_parser_path(self) -> str:
+        with self._settings_lock:
+            return self._settings.apparmor_parser_path
+
+    @staticmethod
+    def _document_path(uri: str) -> Optional[Path]:
+        """Convert a file:// URI to a Path if the file exists on disk."""
+        if not uri.startswith("file://"):
+            return None
+        p = Path(uri.removeprefix("file://"))
+        return p if p.exists() else None
+
     def _republish_all_diagnostics(self) -> None:
         """Re-run and publish diagnostics for every cached document."""
         with self._cache_lock:
@@ -199,8 +215,15 @@ class AppArmorLanguageServer(LanguageServer):
                 )
             return
         search_dirs = self._get_search_dirs()
+        parser_path = self._get_apparmor_parser_path()
         for uri, (doc, errors) in snapshot:
-            diags = get_diagnostics(doc, errors, search_dirs)
+            diags = get_diagnostics(
+                doc,
+                errors,
+                search_dirs,
+                document_path=self._document_path(uri),
+                apparmor_parser_path=parser_path,
+            )
             for diag_uri, d in diags.items():
                 self.text_document_publish_diagnostics(
                     PublishDiagnosticsParams(uri=diag_uri, diagnostics=d)
@@ -243,7 +266,13 @@ class AppArmorLanguageServer(LanguageServer):
             enabled = self._settings.diagnostics_enable
         if not enabled:
             return
-        diags = get_diagnostics(doc, errors, self._get_search_dirs())
+        diags = get_diagnostics(
+            doc,
+            errors,
+            self._get_search_dirs(),
+            document_path=self._document_path(uri),
+            apparmor_parser_path=self._get_apparmor_parser_path(),
+        )
         for diag_uri, d in diags.items():
             self.text_document_publish_diagnostics(
                 PublishDiagnosticsParams(uri=diag_uri, diagnostics=d)

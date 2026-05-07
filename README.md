@@ -17,7 +17,7 @@ server for editing **AppArmor profiles**, written in Python using
 | **Goto Definition** | Jump from `#include <…>` or `include <…>` to the target file; jump to profile definitions by name |
 | **Document Symbols** | Full outline: all profiles, hats, capabilities, file rules, includes and variables |
 | **Workspace Symbols** | Search profiles across all open documents |
-| **Diagnostics / Linting** | Unknown capabilities, invalid network qualifiers, dangerous unconfined exec (`ux`/`Ux`/`pux`/`PUx`/`cux`/`CUx`), empty profiles, duplicate capabilities, conflicting allow+deny, undefined variables, missing include targets, unclosed profiles, unknown profile flags |
+| **Diagnostics / Linting** | Unknown capabilities, invalid network qualifiers, dangerous unconfined exec (`ux`/`Ux`/`pux`/`PUx`/`cux`/`CUx`), empty profiles, duplicate capabilities, conflicting allow+deny, undefined variables, missing include targets, unclosed profiles, unknown profile flags, mutually exclusive file permissions (`w`+`a`), multiple exec transition modes, exec target without exec transition, exec transition with `deny`, bare `x` without `deny`; also surfaces errors from `apparmor_parser` itself when available |
 | **Formatting** | Normalise indentation, remove trailing whitespace, sort capabilities alphabetically, sort parenthesised lists, ensure trailing commas on all rules, normalise `#include` → `include`, collapse multiple blank lines |
 | **Range Formatting** | Format a selected region only |
 | **References** | Find all references to the identifier or variable under the cursor across all open documents (excludes path components and comments) |
@@ -88,6 +88,7 @@ examples below each editor section).
 | `apparmor.diagnostics.enable` | boolean | `true` | Enable or disable all diagnostic (linting) checks |
 | `apparmor.includeSearchPaths` | string[] | `[]` | Extra directories to search when resolving `include` and `abi` paths |
 | `apparmor.profilesSubdir` | string | `"apparmor.d"` | Subdirectory of the workspace root to index for workspace symbols; set to `""` or `"."` to index the whole workspace |
+| `apparmor.apparmorParserPath` | string | `""` | Path to the `apparmor_parser` binary. Leave empty to auto-detect from `$PATH`. Set to a specific path (e.g. `/usr/sbin/apparmor_parser`) to pin a particular version. When the binary is found, the server runs `apparmor_parser -Q -K` against each saved file and surfaces any errors as diagnostics. |
 
 ---
 
@@ -235,6 +236,12 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `unknown-signal-permission` | Warning | Invalid permission in `signal` rule |
 | `unknown-signal-name` | Warning | Unknown signal name in `signal set=(…)` |
 | `unknown-ptrace-permission` | Warning | Invalid permission in `ptrace` rule |
+| `perm-conflict-write-append` | Error | `w` and `a` are mutually exclusive in a file rule |
+| `multiple-exec-modes` | Error | More than one exec transition mode (e.g. `ix`, `px`, `cx`) in a single file rule |
+| `exec-target-without-transition` | Error | `-> profile` exec target specified without an exec transition mode |
+| `deny-with-exec-transition` | Error | Exec transition mode (e.g. `ix`, `px`) used with the `deny` qualifier — use `deny x` instead |
+| `bare-x-without-deny` | Error | Bare `x` permission used without the `deny` qualifier — use an exec transition mode (`ix`, `px`, `cx`, …) |
+| `apparmor-parser-error` | Error | Error reported by `apparmor_parser -Q -K`; attached to the file and line cited by the parser (may be an included abstraction) |
 
 ---
 

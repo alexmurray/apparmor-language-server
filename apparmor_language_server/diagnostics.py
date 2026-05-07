@@ -14,12 +14,20 @@ Checks performed
  • Invalid profile flags
  • Variable used but never defined
  • Include / ABI path that does not exist on disk
+ • File rule: 'w' and 'a' are mutually exclusive
+ • File rule: multiple exec transition modes in one rule
+ • File rule: exec target ('-> profile') without exec transition mode
+ • File rule: exec transition mode with 'deny' qualifier
+ • File rule: bare 'x' without 'deny' qualifier
+ • External: errors reported by apparmor_parser -Q -K (when available)
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +40,7 @@ from lsprotocol.types import (
 
 from .constants import (
     CAPABILITIES,
+    EXECUTE_PERMISSIONS,
     KEYWORD_DEFS,
     NETWORK_DOMAINS,
     NETWORK_PERMISSIONS,
@@ -84,6 +93,18 @@ _DANGEROUS_PERMS = {"ux", "Ux", "pux", "PUx", "cux", "CUx"}
 _RE_PAREN_GROUP = re.compile(r"\([^)]*\)")
 _RE_RTMIN = re.compile(r"^rtmin\+\d+$")
 
+# Regex matching any exec transition mode (longest match first so e.g. "pix"
+# beats "ix" and "px" beats "x").
+_RE_EXEC_MODES = re.compile(
+    "|".join(sorted(EXECUTE_PERMISSIONS.keys(), key=len, reverse=True))
+)
+
+# apparmor_parser stderr format:
+#   AppArmor parser error for <profile-file> in profile <source-file> at line <N>: <msg>
+_RE_PARSER_ERROR = re.compile(
+    r"AppArmor parser error for \S+ in profile (\S+) at line (\d+):\s*(.*)"
+)
+
 
 def _lsp_range(node: Node) -> Range:
     return Range(
@@ -107,6 +128,92 @@ def _diag(
     )
 
 
+# ── apparmor_parser integration ───────────────────────────────────────────────
+
+
+def _find_apparmor_parser(configured_path: str) -> Optional[str]:
+    """Return the executable path for apparmor_parser, or None if unavailable."""
+    if configured_path:
+        if shutil.which(configured_path) or (Path(configured_path).is_file()):
+            return configured_path
+        logger.warning(
+            "Configured apparmor_parser path '%s' not found", configured_path
+        )
+        return None
+    return shutil.which("apparmor_parser")
+
+
+def _check_apparmor_parser(
+    document_path: Path,
+    uri: str,
+    apparmor_parser_path: Optional[str],
+) -> dict[str, list[Diagnostic]]:
+    """Run apparmor_parser -Q -K against document_path; return diagnostics by URI.
+
+    Errors in included files are attached to those files' URIs so editors
+    navigate directly to the offending line.
+    """
+    parser_bin = _find_apparmor_parser(apparmor_parser_path or "")
+    if parser_bin is None:
+        logger.debug("apparmor_parser not found; skipping external parse check")
+        return {}
+
+    logger.debug("Running %s -Q -K %s", parser_bin, document_path)
+    try:
+        result = subprocess.run(
+            [parser_bin, "-Q", "-K", str(document_path)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        logger.warning("apparmor_parser binary not found: %s", parser_bin)
+        return {}
+    except subprocess.TimeoutExpired:
+        logger.warning("apparmor_parser timed out parsing %s", document_path)
+        return {}
+    except OSError as exc:
+        logger.warning("apparmor_parser invocation failed: %s", exc)
+        return {}
+
+    if result.returncode == 0:
+        return {}
+
+    diags: dict[str, list[Diagnostic]] = {}
+    for raw_line in result.stderr.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        m = _RE_PARSER_ERROR.match(line)
+        if m:
+            source_file_str, lineno_str, message = m.group(1), m.group(2), m.group(3)
+            lineno = max(0, int(lineno_str) - 1)  # apparmor_parser is 1-based
+            source_path = Path(source_file_str)
+            if source_path.is_absolute() and source_path.exists():
+                diag_uri = source_path.as_uri()
+            else:
+                # Can't resolve the source file; attach to the top-level document
+                diag_uri = uri
+                lineno = 0
+            diags.setdefault(diag_uri, []).append(
+                Diagnostic(
+                    range=Range(
+                        start=Position(lineno, 0),
+                        end=Position(lineno, 999),
+                    ),
+                    message=message,
+                    severity=DiagnosticSeverity.Error,
+                    source="apparmor_parser",
+                    code="apparmor-parser-error",
+                )
+            )
+        else:
+            logger.debug("Unrecognised apparmor_parser output: %r", raw_line)
+
+    return diags
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
@@ -114,6 +221,8 @@ def get_diagnostics(
     doc: DocumentNode,
     parse_errors: list[ParseError],
     search_dirs: Optional[list[Path]] = None,
+    document_path: Optional[Path] = None,
+    apparmor_parser_path: Optional[str] = None,
 ) -> dict[str, list[Diagnostic]]:
     diags: dict[str, list[Diagnostic]] = {}
     logger.debug("Running diagnostics for %s", doc.uri)
@@ -140,6 +249,13 @@ def get_diagnostics(
 
     for node in doc.children:
         _check_node(node, diags, defined_vars, doc.uri, search_dirs)
+
+    # External apparmor_parser check — only when we have a real saved file
+    if document_path is not None and document_path.exists():
+        for k, v in _check_apparmor_parser(
+            document_path, doc.uri, apparmor_parser_path
+        ).items():
+            diags.setdefault(k, []).extend(v)
 
     total = sum(len(v) for v in diags.values())
     logger.debug(
@@ -411,6 +527,66 @@ def _check_file_rule(
                 )
             )
             break
+
+    # 'w' (write) and 'a' (append) are mutually exclusive
+    if "w" in perm_str and "a" in perm_str:
+        diags.setdefault(uri, []).append(
+            _diag(
+                node,
+                "File permissions 'w' (write) and 'a' (append) are mutually exclusive.",
+                DiagnosticSeverity.Error,
+                "perm-conflict-write-append",
+            )
+        )
+
+    exec_modes = _RE_EXEC_MODES.findall(perm_str)
+
+    # Only one exec transition mode is allowed per rule
+    if len(exec_modes) > 1:
+        diags.setdefault(uri, []).append(
+            _diag(
+                node,
+                f"Multiple exec transition modes ({', '.join(exec_modes)}) are mutually exclusive — only one is allowed per rule.",
+                DiagnosticSeverity.Error,
+                "multiple-exec-modes",
+            )
+        )
+
+    # An exec target ('-> profile') requires an exec transition mode
+    if node.exec_target is not None and not exec_modes:
+        diags.setdefault(uri, []).append(
+            _diag(
+                node,
+                f"Exec target '-> {node.exec_target}' requires an exec transition permission (e.g. px, cx, ix).",
+                DiagnosticSeverity.Error,
+                "exec-target-without-transition",
+            )
+        )
+
+    # Exec transition modes are incompatible with the deny qualifier
+    if "deny" in node.qualifiers and exec_modes:
+        diags.setdefault(uri, []).append(
+            _diag(
+                node,
+                f"Exec transition mode '{exec_modes[0]}' is incompatible with the 'deny' qualifier. "
+                "Use 'deny x' to deny execute permission.",
+                DiagnosticSeverity.Error,
+                "deny-with-exec-transition",
+            )
+        )
+
+    # Bare 'x' is only valid with the deny qualifier
+    bare_perms = _RE_EXEC_MODES.sub("", perm_str)
+    if "x" in bare_perms and "deny" not in node.qualifiers:
+        diags.setdefault(uri, []).append(
+            _diag(
+                node,
+                "Bare 'x' (execute) is only valid with the 'deny' qualifier. "
+                "Use an exec transition mode such as 'ix', 'px', or 'cx' instead.",
+                DiagnosticSeverity.Error,
+                "bare-x-without-deny",
+            )
+        )
 
     # Warn about 'w' that should probably be 'a' (append)
     if "w" in perm_str and node.path.endswith((".log", ".out", ".txt")):
