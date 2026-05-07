@@ -648,7 +648,7 @@ KEYWORD_DEFS: dict[str, KeywordDef] = {
             "```\n/etc/passwd r,\nfile rw /var/log/**,\n```\n\n"
         ),
         detail="Mediate file access by path and permission.",
-        snippet="${1:file} {2:rwx} ${3:/path/},",
+        snippet="file ${1:rwx} ${2:/path/},",
     ),
     "capability": KeywordDef(
         doc=(
@@ -724,7 +724,7 @@ KEYWORD_DEFS: dict[str, KeywordDef] = {
         detail="Allow DBus interaction.",
         snippet="dbus (${1|"
         + ",".join(DBUS_PERMISSIONS)
-        + "|} bus=${2|"
+        + "|}) bus=${2|"
         + ",".join(DBUS_BUSES)
         + "|} path=${3:/org/example} interface=${4:org.example.Interface},",
     ),
@@ -739,7 +739,7 @@ KEYWORD_DEFS: dict[str, KeywordDef] = {
         + ",".join(NETWORK_PERMISSIONS)
         + "|}) type=${2|"
         + ",".join(UNIX_TYPES)
-        + "|} addr=${3:@path} peer=${4:(label=/foo,addr=@bar))},",
+        + "|} addr=${3:@path} peer=${4:(label=/foo,addr=@bar)},",
     ),
     "profile": KeywordDef(
         doc=(
@@ -883,7 +883,7 @@ KEYWORD_DEFS: dict[str, KeywordDef] = {
 
 FILE_PERMISSIONS: dict[str, str] = {
     "r": "Read",
-    "w": "Write (conficts with append)",
+    "w": "Write (conflicts with append)",
     "a": "Append (conflicts with write)",
     "m": "Memory-map executable (mmap PROT_EXEC)",
     "l": "Hard-link",

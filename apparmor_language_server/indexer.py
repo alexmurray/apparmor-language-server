@@ -119,13 +119,19 @@ class WorkspaceIndexer:
         except PermissionError as exc:
             logger.debug("Permission denied scanning %s: %s", root, exc)
 
-    def _index_file(self, path: Path) -> None:
-        """Parse *path* and store the result in the server cache if not already present."""
+    def _index_file(self, path: Path, force: bool = False) -> None:
+        """Parse *path* and store the result in the server cache.
+
+        With ``force=False`` (initial scan) an existing cache entry is left
+        alone. With ``force=True`` (inotify update) the entry is replaced
+        unconditionally so external edits are reflected.
+        """
         uri = path.as_uri()
 
-        with self._server._cache_lock:
-            if uri in self._server._doc_cache:
-                return
+        if not force:
+            with self._server._cache_lock:
+                if uri in self._server._doc_cache:
+                    return
 
         try:
             text = path.read_text(errors="replace")
@@ -141,11 +147,11 @@ class WorkspaceIndexer:
             return
 
         with self._server._cache_lock:
-            if uri not in self._server._doc_cache:
+            if force or uri not in self._server._doc_cache:
                 self._server._doc_cache[uri] = (doc, p.errors)
                 logger.debug("Cached %s", path)
             for inc_uri, inc_result in p.included_docs.items():
-                if inc_uri not in self._server._doc_cache:
+                if force or inc_uri not in self._server._doc_cache:
                     self._server._doc_cache[inc_uri] = inc_result
 
     # ── Watching ──────────────────────────────────────────────────────────────
@@ -214,7 +220,7 @@ class WorkspaceIndexer:
             flags.CLOSE_WRITE in event_flags or flags.MOVED_TO in event_flags
         ):
             logger.debug("File updated: %s", path)
-            self._index_file(path)
+            self._index_file(path, force=True)
         elif not is_dir and (
             flags.DELETE in event_flags or flags.MOVED_FROM in event_flags
         ):

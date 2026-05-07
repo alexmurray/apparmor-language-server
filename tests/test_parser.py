@@ -207,6 +207,17 @@ class TestVariables:
         assert "@{exec_path}" in doc.variables
         assert "/usr/bin/myapp" in doc.variables["@{exec_path}"].values
 
+    def test_exec_path_accumulates_across_profiles(self):
+        """Multiple profiles in one file should each contribute their attachment."""
+        src = (
+            "profile a /usr/bin/a {\n  capability kill,\n}\n"
+            "profile b /usr/bin/b {\n  capability kill,\n}\n"
+        )
+        doc, _ = parse_document("file:///test.aa", src)
+        values = doc.variables["@{exec_path}"].values
+        assert "/usr/bin/a" in values
+        assert "/usr/bin/b" in values
+
     def test_all_variables_contains_doc_uri(self):
         src = "@{HOME} = /home/*/\nprofile x { }\n"
         doc, _ = parse_document("file:///test.aa", src)
@@ -1002,3 +1013,17 @@ class TestParserIncludedDocs:
         uris = set(p.included_docs)
         assert (inc_dir / "base").as_uri() in uris
         assert (inc_dir / "net").as_uri() in uris
+
+    def test_missing_include_error_uri_is_parent_doc(self, tmp_path):
+        """A missing non-conditional include should produce a ParseError whose
+        uri is the parent document's URI (not the bare include path), so the
+        editor can route the diagnostic to the correct file."""
+        parent_uri = (tmp_path / "parent.aa").as_uri()
+        p = Parser(
+            parent_uri,
+            'include "does-not-exist"\nprofile x { capability kill, }\n',
+            search_dirs=[tmp_path],
+        )
+        p.parse()
+        assert any(e.uri == parent_uri for e in p.errors)
+        assert all(e.uri.startswith("file://") for e in p.errors)

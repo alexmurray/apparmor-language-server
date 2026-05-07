@@ -459,16 +459,22 @@ class Parser:
                 doc.variables[node.name] = node
             elif isinstance(node, ProfileNode):
                 doc.profiles.append(node)
-                # add an implicit variable called exec_path for the profile
-                # attachment if it exists
+                # Implicit @{exec_path} variable expanded from the profile
+                # attachment. With multiple profiles in one file we accumulate
+                # the alternatives (variables in AppArmor are value sets) so
+                # the last attachment doesn't clobber the first.
                 if node.attachment:
                     exec_path_var = "@{exec_path}"
-                    doc.variables[exec_path_var] = VariableDefNode(
-                        range=node.range,
-                        raw=node.attachment,
-                        name=exec_path_var,
-                        values=[node.attachment],
-                    )
+                    existing = doc.variables.get(exec_path_var)
+                    if existing is None:
+                        doc.variables[exec_path_var] = VariableDefNode(
+                            range=node.range,
+                            raw=node.attachment,
+                            name=exec_path_var,
+                            values=[node.attachment],
+                        )
+                    elif node.attachment not in existing.values:
+                        existing.values.append(node.attachment)
                 self._collect_includes(node, doc)
 
         all_vars: dict[str, dict[str, VariableDefNode]] = {doc.uri: doc.variables}
@@ -526,7 +532,7 @@ class Parser:
                 self.errors.append(
                     ParseError(
                         f"Error reading included file '{include.path}': {e}",
-                        include.path,
+                        self._uri,
                         include.range.start.line,
                         include.range.start.character,
                     )
@@ -537,7 +543,7 @@ class Parser:
                 self.errors.append(
                     ParseError(
                         f"Included file '{include.path}' not found",
-                        include.path,
+                        self._uri,
                         include.range.start.line,
                         include.range.start.character,
                     )

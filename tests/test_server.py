@@ -1235,3 +1235,46 @@ class TestDidChangeUsesWorkspaceText:
         did_change(ls, params)
         doc, _ = ls._doc_cache[URI]
         assert doc.profiles == []
+
+
+# ── _publish_diagnostics: external apparmor_parser only on save/open ──────────
+
+
+class TestPublishDiagnosticsExternalCheck:
+    """The apparmor_parser subprocess check operates on the on-disk file, so
+    it must only run on did_open / did_save — never on every keystroke."""
+
+    @pytest.fixture
+    def server(self):
+        return AppArmorLanguageServer()
+
+    def _captured_document_path(self, server, *, run_external):
+        from unittest.mock import patch
+
+        with patch(
+            "apparmor_language_server.server.get_diagnostics", return_value={}
+        ) as mock_get:
+            server._publish_diagnostics(
+                URI, "profile x { }\n", run_external=run_external
+            )
+        assert mock_get.call_count == 1
+        return mock_get.call_args.kwargs["document_path"]
+
+    def test_did_change_path_skips_external(self, server):
+        assert self._captured_document_path(server, run_external=False) is None
+
+    def test_save_path_passes_document_path(self, server, tmp_path):
+        f = tmp_path / "test.aa"
+        f.write_text("profile x { }\n")
+        uri = f.as_uri()
+        from unittest.mock import patch
+
+        with patch(
+            "apparmor_language_server.server.get_diagnostics", return_value={}
+        ) as mock_get:
+            server._publish_diagnostics(uri, "profile x { }\n", run_external=True)
+        assert mock_get.call_args.kwargs["document_path"] == f
+
+    def test_default_call_skips_external(self, server):
+        """Default call (no run_external kwarg) must not run the external check."""
+        assert self._captured_document_path(server, run_external=False) is None

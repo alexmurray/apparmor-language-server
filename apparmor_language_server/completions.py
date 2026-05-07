@@ -38,6 +38,7 @@ from .constants import (
     CAPABILITIES,
     DBUS_BUSES,
     DBUS_PERMISSIONS,
+    KEYWORD_DEFS,
     MOUNT_OPTIONS,
     NETWORK_DOMAINS,
     NETWORK_PERMISSIONS,
@@ -244,103 +245,59 @@ def get_completions(
 # ── Keyword completions ───────────────────────────────────────────────────────
 
 
+# Line-starter snippets that don't have a KEYWORD_DEFS entry: rule qualifiers
+# and the bare "rlimit" form (KEYWORD_DEFS uses the multi-word "set rlimit" key).
+_EXTRA_KEYWORD_SNIPPETS: dict[str, tuple[str, str]] = {
+    "deny": (
+        "deny ${1:/path/**} ${2:rw},",
+        "**Qualifier `deny`**\n\nExplicitly deny access to a resource.",
+    ),
+    "audit": (
+        "audit ${1:/path/**} ${2:r},",
+        "**Qualifier `audit`**\n\nAllow but audit access.",
+    ),
+    "owner": (
+        "owner ${1:/path/**} ${2:rw},",
+        "**Qualifier `owner`**\n\nAllow only when the process owns the file.",
+    ),
+    "rlimit": (
+        "rlimit ${1:nofile} <= ${2:1024},",
+        "Set a resource limit for the confined process.",
+    ),
+}
+
+
+def _keyword_item(label: str, snippet: str, doc: str) -> CompletionItem:
+    return CompletionItem(
+        label=label,
+        kind=CompletionItemKind.Keyword,
+        insert_text=snippet,
+        insert_text_format=InsertTextFormat.Snippet,
+        documentation=MarkupContent(kind=MarkupKind.Markdown, value=doc),
+    )
+
+
 def _complete_keywords(partial: str) -> list[CompletionItem]:
     """Snippet completions for all AppArmor rule keywords."""
-    snippets: dict[str, tuple[str, str]] = {
-        "capability": (
-            "capability ${1:cap_name},",
-            "Grant a Linux capability to the confined process.",
-        ),
-        "network": (
-            "network ${1:inet} ${2:stream},",
-            "Allow network access for the given family/type.",
-        ),
-        "signal": (
-            "signal (${1:send receive}) set=(${2:term}) peer=${3:@{profile_name}},",
-            "Allow sending/receiving signals.",
-        ),
-        "ptrace": (
-            "ptrace (${1:read trace}) peer=${2:@{profile_name}},",
-            "Allow ptrace of another process.",
-        ),
-        "mount": (
-            "mount options=(${1:ro}) ${2:/path/} -> ${3:/mnt/},",
-            "Allow a mount operation.",
-        ),
-        "umount": (
-            "umount ${1:/mnt/},",
-            "Allow unmounting a filesystem.",
-        ),
-        "dbus": (
-            "dbus (${1:send}) bus=${2:session} path=${3:/org/example} interface=${4:org.example.Interface},",
-            "Allow DBus interaction.",
-        ),
-        "unix": (
-            "unix (${1:connect}) type=${2:stream} addr=${3:@path},",
-            "Allow Unix domain socket operation.",
-        ),
-        "deny": (
-            "deny ${1:/path/**} ${2:rw},",
-            "Explicitly deny access to a resource.",
-        ),
-        "audit": (
-            "audit ${1:/path/**} ${2:r},",
-            "Allow but audit access.",
-        ),
-        "owner": (
-            "owner ${1:/path/**} ${2:rw},",
-            "Allow only when the process owns the file.",
-        ),
-        "change_profile": (
-            "change_profile -> ${1:profile_name},",
-            "Allow switching to another AppArmor profile.",
-        ),
-        "rlimit": (
-            "rlimit ${1:nofile} <= ${2:1024},",
-            "Set a resource limit for the confined process.",
-        ),
-        "abi": (
-            "abi <${1:abi/5.0}>,",
-            "The AppArmor ABI to target for this profile.",
-        ),
-        "include": (
-            "include <${1:abstractions/base}>",
-            "Include an AppArmor abstraction or sub-policy file.",
-        ),
-        "profile": (
-            "profile ${1:name} {\n  include <abstractions/base>\n  $0\n}",
-            "Define a new AppArmor profile.",
-        ),
-        "hat": (
-            "hat ${1:name} {\n  $0\n}",
-            "Define a hat (change_hat target) sub-profile.",
-        ),
-        "userns": (
-            "userns,",
-            "Allow user namespace creation.",
-        ),
-        "io_uring": (
-            "io_uring (${1:sqpoll override_creds}),",
-            "Allow io_uring operations.",
-        ),
-        "mqueue": (
-            "mqueue (${1:create open delete read write}) type=${2:posix} name=${3:/name},",
-            "Allow POSIX/SysV message queue operations.",
-        ),
-    }
-
     items: list[CompletionItem] = []
-    for kw, (snippet, doc) in snippets.items():
+    seen: set[str] = set()
+
+    # Single-word rule keywords from KEYWORD_DEFS (the canonical source of truth).
+    # Multi-word keys (e.g. "set rlimit", "include if exists") are skipped; their
+    # short forms appear via _EXTRA_KEYWORD_SNIPPETS or KEYWORD_DEFS itself.
+    for kw, kw_def in KEYWORD_DEFS.items():
+        if " " in kw or kw_def.snippet is None:
+            continue
         if not partial or kw.startswith(partial):
-            items.append(
-                CompletionItem(
-                    label=kw,
-                    kind=CompletionItemKind.Keyword,
-                    insert_text=snippet,
-                    insert_text_format=InsertTextFormat.Snippet,
-                    documentation=MarkupContent(kind=MarkupKind.Markdown, value=doc),
-                )
-            )
+            items.append(_keyword_item(kw, kw_def.snippet, kw_def.doc))
+        seen.add(kw)
+
+    for kw, (snippet, doc) in _EXTRA_KEYWORD_SNIPPETS.items():
+        if kw in seen:
+            continue
+        if not partial or kw.startswith(partial):
+            items.append(_keyword_item(kw, snippet, doc))
+
     return items
 
 

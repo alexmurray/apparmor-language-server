@@ -217,11 +217,14 @@ class AppArmorLanguageServer(LanguageServer):
         search_dirs = self._get_search_dirs()
         parser_path = self._get_apparmor_parser_path()
         for uri, (doc, errors) in snapshot:
+            # Skip the external apparmor_parser check here: the buffer text
+            # may be ahead of the on-disk file, and we don't want to block
+            # the configuration handler on N subprocess invocations.
             diags = get_diagnostics(
                 doc,
                 errors,
                 search_dirs,
-                document_path=self._document_path(uri),
+                document_path=None,
                 apparmor_parser_path=parser_path,
             )
             for diag_uri, d in diags.items():
@@ -260,17 +263,27 @@ class AppArmorLanguageServer(LanguageServer):
         except Exception:
             return None
 
-    def _publish_diagnostics(self, uri: str, text: str) -> None:
+    def _publish_diagnostics(
+        self, uri: str, text: str, run_external: bool = False
+    ) -> None:
+        """Re-parse *uri* and publish diagnostics.
+
+        ``run_external`` enables the apparmor_parser subprocess check, which
+        operates on the on-disk file. Callers should pass ``True`` only for
+        save-time events so we don't surface stale parser errors mid-edit
+        and don't spawn a subprocess on every keystroke.
+        """
         doc, errors = self.parse_and_cache(uri, text)
         with self._settings_lock:
             enabled = self._settings.diagnostics_enable
         if not enabled:
             return
+        document_path = self._document_path(uri) if run_external else None
         diags = get_diagnostics(
             doc,
             errors,
             self._get_search_dirs(),
-            document_path=self._document_path(uri),
+            document_path=document_path,
             apparmor_parser_path=self._get_apparmor_parser_path(),
         )
         for diag_uri, d in diags.items():
@@ -290,7 +303,9 @@ server = AppArmorLanguageServer()
 @server.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: AppArmorLanguageServer, params: DidOpenTextDocumentParams):
     logger.info("Opened: %s", params.text_document.uri)
-    ls._publish_diagnostics(params.text_document.uri, params.text_document.text)
+    ls._publish_diagnostics(
+        params.text_document.uri, params.text_document.text, run_external=True
+    )
 
 
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)
@@ -309,7 +324,7 @@ def did_save(ls: AppArmorLanguageServer, params: DidSaveTextDocumentParams):
     uri = params.text_document.uri
     logger.debug("Saved: %s", uri)
     text = ls.get_text(uri) or ""
-    ls._publish_diagnostics(uri, text)
+    ls._publish_diagnostics(uri, text, run_external=True)
 
 
 @server.feature(TEXT_DOCUMENT_DID_CLOSE)

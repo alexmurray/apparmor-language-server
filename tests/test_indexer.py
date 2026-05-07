@@ -148,6 +148,25 @@ class TestHandleEvent:
         indexer._handle_event(self._event("test.aa", int(flags.CLOSE_WRITE)))
         assert f.as_uri() in mock_server._doc_cache
 
+    def test_close_write_refreshes_stale_cache_entry(
+        self, tmp_path, indexer, mock_server
+    ):
+        """An external edit (CLOSE_WRITE) must replace an existing cache entry,
+        otherwise modifications made outside the editor never propagate."""
+        f = tmp_path / "test.aa"
+        f.write_text("profile original /bin/orig { }\n")
+        stale = (DocumentNode(uri=f.as_uri()), [])
+        mock_server._doc_cache[f.as_uri()] = stale
+
+        f.write_text("profile updated /bin/new { capability kill, }\n")
+        self._register_dir(indexer, tmp_path)
+        indexer._handle_event(self._event("test.aa", int(flags.CLOSE_WRITE)))
+
+        cached_doc, _ = mock_server._doc_cache[f.as_uri()]
+        assert cached_doc is not stale[0]
+        assert cached_doc.profiles
+        assert cached_doc.profiles[0].name == "updated"
+
     def test_moved_to_indexes_file(self, tmp_path, indexer, mock_server):
         f = tmp_path / "test.aa"
         f.write_text("profile test { }\n")
