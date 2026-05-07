@@ -79,6 +79,7 @@ from lsprotocol.types import (
 )
 from pygls.lsp.server import LanguageServer
 
+from ._text import code_end as _code_end
 from .completions import get_completions
 from .constants import DEFAULT_INCLUDE_SEARCH_DIRS
 from .diagnostics import get_diagnostics
@@ -841,15 +842,6 @@ def range_formatting(
 
 _RE_VARIABLE = re.compile(r"@{[A-Za-z0-9_]+}")
 _RE_WORD = re.compile(r"[A-Za-z_/][A-Za-z0-9_/.-]*")
-_RE_DIRECTIVE_LINE = re.compile(r"^\s*#(include|abi)\b")
-
-
-def _code_end(line: str) -> int:
-    """Return the index at which a comment begins on *line*, or len(line)."""
-    if _RE_DIRECTIVE_LINE.match(line):
-        return len(line)
-    idx = line.find("#")
-    return idx if idx >= 0 else len(line)
 
 
 def _word_at_position(line: str, ch: int) -> str:

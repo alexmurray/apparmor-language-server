@@ -28,8 +28,9 @@ import logging
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from lsprotocol.types import (
     Diagnostic,
@@ -38,6 +39,7 @@ from lsprotocol.types import (
     Range,
 )
 
+from ._text import code_end
 from .constants import (
     CAPABILITIES,
     EXECUTE_PERMISSIONS,
@@ -259,8 +261,14 @@ def get_diagnostics(
     for _, vars in doc.all_variables.items():
         defined_vars.update(set(vars.keys()))
 
+    ctx = DiagContext(
+        diags=diags,
+        uri=doc.uri,
+        defined_vars=defined_vars,
+        search_dirs=search_dirs,
+    )
     for node in doc.children:
-        _check_node(node, diags, defined_vars, doc.uri, search_dirs)
+        _check_node(node, ctx)
 
     # External apparmor_parser check — only when we have a real saved file
     if document_path is not None and document_path.exists():
@@ -279,64 +287,30 @@ def get_diagnostics(
     return diags
 
 
-def _check_node(
-    node: Node,
-    diags: dict[str, list[Diagnostic]],
-    defined_vars: set[str],
-    uri: str,
-    search_dirs: Optional[list[Path]] = None,
-) -> None:
-    if isinstance(node, ProfileNode):
-        _check_profile(node, diags, uri, defined_vars, search_dirs)
-    elif isinstance(node, CapabilityNode):
-        _check_capability(node, diags, uri)
-    elif isinstance(node, NetworkNode):
-        _check_network(node, diags, uri)
-    elif isinstance(node, SignalRuleNode):
-        _check_signal(node, diags, uri)
-    elif isinstance(node, PtraceRuleNode):
-        _check_ptrace(node, diags, uri)
-        _check_var_refs(node, diags, uri, defined_vars)
-    elif isinstance(node, FileRuleNode):
-        _check_file_rule(node, diags, uri, defined_vars)
-    elif isinstance(node, ABINode):
-        _check_abi(node, diags, uri, search_dirs)
-    elif isinstance(node, IncludeNode):
-        _check_include(node, diags, uri, search_dirs)
-    elif isinstance(
-        node,
-        (
-            DbusRuleNode,
-            UnixRuleNode,
-            MountRuleNode,
-            UmountRuleNode,
-            UsernsRuleNode,
-            IoUringRuleNode,
-            MqueueRuleNode,
-            RlimitRuleNode,
-            PivotRootRuleNode,
-            ChangeProfileRuleNode,
-            ChangeHatRuleNode,
-            LinkRuleNode,
-            AllRuleNode,
-            RemountRuleNode,
-        ),
-    ):
-        _check_var_refs(node, diags, uri, defined_vars)
-    elif isinstance(node, UnknownRuleNode):
-        _check_unknown_rule(node, diags, uri, defined_vars)
+@dataclass
+class DiagContext:
+    """Shared state threaded through the per-node check functions."""
+
+    diags: dict[str, list[Diagnostic]]
+    uri: str
+    defined_vars: set[str]
+    search_dirs: Optional[list[Path]] = None
+
+
+_DiagCheck = Callable[[Node, "DiagContext"], None]
+
+
+def _check_node(node: Node, ctx: DiagContext) -> None:
+    for check in _CHECKS.get(type(node), ()):
+        check(node, ctx)
 
 
 # ── Profile checks ────────────────────────────────────────────────────────────
 
 
-def _check_profile(
-    node: ProfileNode,
-    diags: dict[str, list[Diagnostic]],
-    uri: str,
-    defined_vars: set[str],
-    search_dirs: Optional[list[Path]] = None,
-) -> None:
+def _check_profile(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, ProfileNode)
+    diags, uri = ctx.diags, ctx.uri
     # Invalid flags
     for flag in node.flags:
         flag_name = flag.split("=")[0].strip()
@@ -396,20 +370,20 @@ def _check_profile(
             "conflicting-capability",
         )
 
-    # Recurse
-    local_vars = set(defined_vars)
+    # Recurse with profile-local variables added to scope
+    local_vars = set(ctx.defined_vars)
     for child in node.children:
         if isinstance(child, VariableDefNode):
             local_vars.add(child.name)
-        _check_node(child, diags, local_vars, uri, search_dirs)
+        _check_node(child, replace(ctx, defined_vars=local_vars))
 
 
 # ── Capability checks ─────────────────────────────────────────────────────────
 
 
-def _check_capability(
-    node: CapabilityNode, diags: dict[str, list[Diagnostic]], uri: str
-) -> None:
+def _check_capability(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, CapabilityNode)
+    diags, uri = ctx.diags, ctx.uri
     for cap in node.capabilities:
         c = cap.strip().lower()
         if c and c not in CAPABILITIES:
@@ -426,9 +400,9 @@ def _check_capability(
 # ── Network checks ────────────────────────────────────────────────────────────
 
 
-def _check_network(
-    node: NetworkNode, diags: dict[str, list[Diagnostic]], uri: str
-) -> None:
+def _check_network(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, NetworkNode)
+    diags, uri = ctx.diags, ctx.uri
     rest = node.rest
     # Remove parenthesized groups (access lists, peer conditionals)
     rest = _RE_PAREN_GROUP.sub("", rest)
@@ -459,9 +433,9 @@ def _check_network(
 # ── Signal checks ─────────────────────────────────────────────────────────────
 
 
-def _check_signal(
-    node: SignalRuleNode, diags: dict[str, list[Diagnostic]], uri: str
-) -> None:
+def _check_signal(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, SignalRuleNode)
+    diags, uri = ctx.diags, ctx.uri
     for perm in node.permissions:
         if perm.lower() not in SIGNAL_PERMISSIONS:
             _add(
@@ -487,9 +461,9 @@ def _check_signal(
 # ── Ptrace checks ────────────────────────────────────────────────────────────
 
 
-def _check_ptrace(
-    node: PtraceRuleNode, diags: dict[str, list[Diagnostic]], uri: str
-) -> None:
+def _check_ptrace(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, PtraceRuleNode)
+    diags, uri = ctx.diags, ctx.uri
     content = node.content.strip()
     if content.startswith("("):
         perm_str = (
@@ -517,12 +491,9 @@ def _check_ptrace(
 _VAR_REF = re.compile(r"@\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 
-def _check_file_rule(
-    node: FileRuleNode,
-    diags: dict[str, list[Diagnostic]],
-    uri: str,
-    defined_vars: set[str],
-) -> None:
+def _check_file_rule(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, FileRuleNode)
+    diags, uri = ctx.diags, ctx.uri
     perm_str = node.perms
     exec_modes = _RE_EXEC_MODES.findall(perm_str)
 
@@ -611,33 +582,20 @@ def _check_file_rule(
             "prefer-append",
         )
 
-    # Undefined variable references in path
-    for var_ref in _VAR_REF.findall(node.path):
-        if var_ref not in defined_vars:
-            _add(
-                diags,
-                uri,
-                node,
-                f"Variable '{var_ref}' is used but never defined.",
-                DiagnosticSeverity.Warning,
-                "undefined-variable",
-            )
+    # Undefined variable references — handled uniformly by _check_var_refs,
+    # which also covers exec_target and any qualifier prefix.
 
 
 # ── Abi checks ────────────────────────────────────────────────────────────
 
 
-def _check_abi(
-    node: ABINode,
-    diags: dict[str, list[Diagnostic]],
-    uri: str,
-    search_dirs: Optional[list[Path]] = None,
-) -> None:
-    resolved = resolve_include_path(node.path, uri, search_dirs)
+def _check_abi(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, ABINode)
+    resolved = resolve_include_path(node.path, ctx.uri, ctx.search_dirs)
     if resolved is None:
         _add(
-            diags,
-            uri,
+            ctx.diags,
+            ctx.uri,
             node,
             f"ABI target '{node.path}' could not be found on disk.",
             DiagnosticSeverity.Warning,
@@ -648,40 +606,50 @@ def _check_abi(
 # ── Include checks ────────────────────────────────────────────────────────────
 
 
-def _check_include(
-    node: IncludeNode,
-    diags: dict[str, list[Diagnostic]],
-    uri: str,
-    search_dirs: Optional[list[Path]] = None,
-) -> None:
-    resolved = resolve_include_path(node.path, uri, search_dirs)
-    if resolved is None:
-        # only an error if the include is not conditional
-        if not node.conditional:
-            _add(
-                diags,
-                uri,
-                node,
-                f"Include target '{node.path}' could not be found on disk.",
-                DiagnosticSeverity.Warning,
-                "missing-include",
-            )
+def _check_include(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, IncludeNode)
+    resolved = resolve_include_path(node.path, ctx.uri, ctx.search_dirs)
+    # Conditional includes are not an error if missing
+    if resolved is None and not node.conditional:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"Include target '{node.path}' could not be found on disk.",
+            DiagnosticSeverity.Warning,
+            "missing-include",
+        )
 
 
 # ── Known and unknown rule checks ────────────────────────────────────────────
 
 
-def _check_var_refs(
-    node: Node,
-    diags: dict[str, list[Diagnostic]],
-    uri: str,
-    defined_vars: set[str],
-) -> None:
-    for var_ref in _VAR_REF.findall(node.raw):
-        if var_ref not in defined_vars:
+def _check_var_refs(node: Node, ctx: DiagContext) -> None:
+    """Flag any @{…} reference in *node* that isn't defined in scope.
+
+    Scans every line of node.raw with trailing comments stripped via
+    code_end, so a comment like "# use @{HOME}" no longer false-positives,
+    while real references in any structured field (path, exec_target,
+    peer=, addr=, …) are caught uniformly across rule types.
+
+    TODO(structured-fields): This is the raw-text scanning implementation.
+    The cleaner long-term answer is to iterate the rule's structured fields
+    directly — but most rule types currently store their post-keyword body
+    as a single ``content: str`` (see the matching TODO above the freeform
+    RuleNode declarations in parser.py). Once those types grow real fields,
+    this function should iterate ``getattr(node, name)`` for each declared
+    value-bearing field and stop relying on raw-text scanning at all. The
+    ``code_end`` heuristic and the ``seen`` set below would then go away.
+    """
+    seen: set[str] = set()
+    for line in node.raw.splitlines():
+        for var_ref in _VAR_REF.findall(line[: code_end(line)]):
+            if var_ref in seen or var_ref in ctx.defined_vars:
+                continue
+            seen.add(var_ref)
             _add(
-                diags,
-                uri,
+                ctx.diags,
+                ctx.uri,
                 node,
                 f"Variable '{var_ref}' is used but never defined.",
                 DiagnosticSeverity.Warning,
@@ -689,12 +657,8 @@ def _check_var_refs(
             )
 
 
-def _check_unknown_rule(
-    node: UnknownRuleNode,
-    diags: dict[str, list[Diagnostic]],
-    uri: str,
-    defined_vars: set[str],
-) -> None:
+def _check_unknown_rule(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, UnknownRuleNode)
     kw = node.keyword.lower()
     if not kw:
         return
@@ -702,12 +666,48 @@ def _check_unknown_rule(
     if kw not in KEYWORD_DEFS:
         if not kw.startswith("/") and not kw.startswith("@"):
             _add(
-                diags,
-                uri,
+                ctx.diags,
+                ctx.uri,
                 node,
                 f"Unrecognised rule keyword '{node.keyword}'.",
                 DiagnosticSeverity.Warning,
                 "unknown-keyword",
             )
 
-    _check_var_refs(node, diags, uri, defined_vars)
+    _check_var_refs(node, ctx)
+
+
+# ── Dispatch table ────────────────────────────────────────────────────────────
+# Map each AST node type to the ordered list of checks to run against it.
+# Adding a new check is a one-line edit here plus its implementation above;
+# the previous long isinstance chain in _check_node is now driven by data.
+
+_VAR_REF_RULE_TYPES: tuple[type[Node], ...] = (
+    DbusRuleNode,
+    UnixRuleNode,
+    MountRuleNode,
+    UmountRuleNode,
+    UsernsRuleNode,
+    IoUringRuleNode,
+    MqueueRuleNode,
+    RlimitRuleNode,
+    PivotRootRuleNode,
+    ChangeProfileRuleNode,
+    ChangeHatRuleNode,
+    LinkRuleNode,
+    AllRuleNode,
+    RemountRuleNode,
+)
+
+_CHECKS: dict[type[Node], tuple[_DiagCheck, ...]] = {
+    ProfileNode: (_check_profile,),
+    CapabilityNode: (_check_capability, _check_var_refs),
+    NetworkNode: (_check_network, _check_var_refs),
+    SignalRuleNode: (_check_signal, _check_var_refs),
+    PtraceRuleNode: (_check_ptrace, _check_var_refs),
+    FileRuleNode: (_check_file_rule, _check_var_refs),
+    ABINode: (_check_abi,),
+    IncludeNode: (_check_include,),
+    UnknownRuleNode: (_check_unknown_rule,),
+    **{cls: (_check_var_refs,) for cls in _VAR_REF_RULE_TYPES},
+}

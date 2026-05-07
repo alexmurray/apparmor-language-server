@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 from lsprotocol.types import (
     Hover,
@@ -51,7 +51,6 @@ from .parser import (
     CapabilityNode,
     ChangeHatRuleNode,
     ChangeProfileRuleNode,
-    CommentNode,
     DbusRuleNode,
     DocumentNode,
     FileRuleNode,
@@ -136,55 +135,17 @@ def _node_at_position(doc: DocumentNode, line: int) -> Optional[Node]:
 # ── Per-node hover dispatch ───────────────────────────────────────────────────
 
 
+_HoverHandler = Callable[[Node, str, int], Optional[Hover]]
+
+
 def _hover_for_node(node: Node, line_text: str, ch: int) -> Optional[Hover]:
-    if isinstance(node, CommentNode):
+    handler = _HOVER_DISPATCH.get(type(node))
+    if handler is None:
         return None
-    if isinstance(node, CapabilityNode):
-        return _hover_capability(line_text, ch)
-    if isinstance(node, NetworkNode):
-        return _hover_network(line_text, ch)
-    if isinstance(node, SignalRuleNode):
-        return _hover_signal(line_text, ch)
-    if isinstance(node, FileRuleNode):
-        return _hover_file_rule(node, line_text, ch)
-    if isinstance(node, ProfileNode):
-        return _hover_profile(line_text, ch)
-    if isinstance(node, IncludeNode):
-        return _hover_include(node, line_text, ch)
-    if isinstance(node, ABINode):
-        return _hover_abi(line_text, ch)
-    if isinstance(node, PtraceRuleNode):
-        return _hover_ptrace(line_text, ch)
-    if isinstance(node, DbusRuleNode):
-        return _hover_dbus(line_text, ch)
-    if isinstance(node, UnixRuleNode):
-        return _hover_unix(line_text, ch)
-    if isinstance(node, (MountRuleNode, UmountRuleNode)):
-        return _hover_mount(line_text, ch)
-    if isinstance(node, RlimitRuleNode):
-        return _hover_rlimit(line_text, ch)
-    if isinstance(node, IoUringRuleNode):
-        return _hover_io_uring(line_text, ch)
-    if isinstance(node, MqueueRuleNode):
-        return _hover_mqueue(line_text, ch)
-    if isinstance(
-        node,
-        (UsernsRuleNode, PivotRootRuleNode, ChangeProfileRuleNode, ChangeHatRuleNode),
-    ):
-        return _hover_keyword_rule(line_text, ch)
-    if isinstance(node, LinkRuleNode):
-        return _hover_link(line_text, ch)
-    if isinstance(node, AllRuleNode):
-        return _hover_keyword_rule(line_text, ch)
-    if isinstance(node, RemountRuleNode):
-        return _hover_mount(line_text, ch)
-    if isinstance(node, UnknownRuleNode):
-        return _hover_unknown(line_text, ch)
-    # VariableDefNode: the @{name} token is already handled by _RE_VAR above.
-    return None
+    return handler(node, line_text, ch)
 
 
-def _hover_capability(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_capability(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -197,7 +158,7 @@ def _hover_capability(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_network(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_network(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -226,7 +187,7 @@ def _hover_network(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_signal(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_signal(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -249,7 +210,8 @@ def _hover_signal(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_file_rule(node: FileRuleNode, line_text: str, ch: int) -> Optional[Hover]:
+def _hover_file_rule(node: Node, line_text: str, ch: int) -> Optional[Hover]:
+    assert isinstance(node, FileRuleNode)
     word, ws, we = _word_at(line_text, ch)
     if word in QUALIFIER_DEFS:
         return _make_hover(QUALIFIER_DEFS[word].doc, ws, we)
@@ -274,7 +236,7 @@ def _hover_file_rule(node: FileRuleNode, line_text: str, ch: int) -> Optional[Ho
     return None
 
 
-def _hover_profile(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_profile(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -288,7 +250,8 @@ def _hover_profile(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_include(node: IncludeNode, line_text: str, ch: int) -> Optional[Hover]:
+def _hover_include(node: Node, line_text: str, ch: int) -> Optional[Hover]:
+    assert isinstance(node, IncludeNode)
     if node.conditional:
         kw = "include if exists"
         kw_start = line_text.find(kw)
@@ -304,7 +267,7 @@ def _hover_include(node: IncludeNode, line_text: str, ch: int) -> Optional[Hover
     return None
 
 
-def _hover_abi(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_abi(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if word == "abi":
         kw_def = KEYWORD_DEFS.get("abi")
@@ -313,7 +276,7 @@ def _hover_abi(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_ptrace(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_ptrace(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -324,7 +287,7 @@ def _hover_ptrace(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_ptrace_token(word, ws, we)
 
 
-def _hover_dbus(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_dbus(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -335,7 +298,7 @@ def _hover_dbus(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_dbus_token(word, ws, we)
 
 
-def _hover_unix(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_unix(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -346,7 +309,7 @@ def _hover_unix(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_unix_token(word, ws, we)
 
 
-def _hover_mount(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_mount(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -359,7 +322,7 @@ def _hover_mount(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_mount_token(word, ws, we)
 
 
-def _hover_rlimit(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_rlimit(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -368,7 +331,7 @@ def _hover_rlimit(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_rlimit_token(word, ws, we)
 
 
-def _hover_io_uring(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_io_uring(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -379,7 +342,7 @@ def _hover_io_uring(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_io_uring_token(word, ws, we)
 
 
-def _hover_mqueue(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_mqueue(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -390,7 +353,7 @@ def _hover_mqueue(line_text: str, ch: int) -> Optional[Hover]:
     return _hover_mqueue_token(word, ws, we)
 
 
-def _hover_keyword_rule(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_keyword_rule(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -402,7 +365,7 @@ def _hover_keyword_rule(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_link(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_link(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -421,7 +384,7 @@ def _hover_link(line_text: str, ch: int) -> Optional[Hover]:
     return None
 
 
-def _hover_unknown(line_text: str, ch: int) -> Optional[Hover]:
+def _hover_unknown(node: Node, line_text: str, ch: int) -> Optional[Hover]:
     word, ws, we = _word_at(line_text, ch)
     if not word:
         return None
@@ -431,6 +394,38 @@ def _hover_unknown(line_text: str, ch: int) -> Optional[Hover]:
     if kw_def:
         return _make_hover(kw_def.doc, ws, we)
     return None
+
+
+# ── Dispatch table ────────────────────────────────────────────────────────────
+# Map each AST node type to its hover handler. Node types not present here
+# (CommentNode, VariableDefNode) have no hover; the variable @{name} tokens
+# inside any node are resolved earlier via _RE_VAR in get_hover.
+
+_HOVER_DISPATCH: dict[type[Node], _HoverHandler] = {
+    CapabilityNode: _hover_capability,
+    NetworkNode: _hover_network,
+    SignalRuleNode: _hover_signal,
+    FileRuleNode: _hover_file_rule,
+    ProfileNode: _hover_profile,
+    IncludeNode: _hover_include,
+    ABINode: _hover_abi,
+    PtraceRuleNode: _hover_ptrace,
+    DbusRuleNode: _hover_dbus,
+    UnixRuleNode: _hover_unix,
+    MountRuleNode: _hover_mount,
+    UmountRuleNode: _hover_mount,
+    RemountRuleNode: _hover_mount,
+    RlimitRuleNode: _hover_rlimit,
+    IoUringRuleNode: _hover_io_uring,
+    MqueueRuleNode: _hover_mqueue,
+    UsernsRuleNode: _hover_keyword_rule,
+    PivotRootRuleNode: _hover_keyword_rule,
+    ChangeProfileRuleNode: _hover_keyword_rule,
+    ChangeHatRuleNode: _hover_keyword_rule,
+    AllRuleNode: _hover_keyword_rule,
+    LinkRuleNode: _hover_link,
+    UnknownRuleNode: _hover_unknown,
+}
 
 
 # ── Per-keyword token handlers ────────────────────────────────────────────────

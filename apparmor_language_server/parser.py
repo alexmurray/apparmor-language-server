@@ -263,6 +263,16 @@ class SignalRuleNode(RuleNode):
     peer: Optional[str] = None
 
 
+# TODO(structured-fields): These rule types currently carry the post-keyword
+# body as a single freeform ``content: str``. That forces downstream consumers
+# (notably diagnostics._check_var_refs) to scan ``node.raw`` with a
+# comment-stripping heuristic. The cleaner endpoint is per-rule structured
+# fields (peer=, addr=, type=, options=, etc.) so callers can iterate
+# well-typed values rather than reparsing text. Doing so will need a parser
+# change for each type below; ``SignalRuleNode`` and ``LinkRuleNode`` already
+# demonstrate the target shape.
+
+
 @dataclass
 class PtraceRuleNode(RuleNode):
     content: str = ""

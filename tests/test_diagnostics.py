@@ -187,6 +187,43 @@ class TestVariableDiagnostics:
         codes = _codes(src)
         assert "undefined-variable" not in codes
 
+    def test_undefined_variable_in_exec_target(self):
+        """Variables in the file-rule exec target should be checked too."""
+        src = "profile x {\n  /usr/bin/foo Px -> @{UNDEFINED_PEER},\n}\n"
+        assert "undefined-variable" in _codes(src)
+
+    def test_undefined_variable_in_signal_peer(self):
+        src = "profile x {\n  signal (send) peer=@{UNDEFINED_PEER},\n}\n"
+        assert "undefined-variable" in _codes(src)
+
+    def test_undefined_variable_in_network_rule(self):
+        src = "profile x {\n  network @{UNDEFINED} stream,\n}\n"
+        assert "undefined-variable" in _codes(src)
+
+    def test_variable_in_trailing_comment_not_flagged(self):
+        """A @{var} reference inside a trailing comment is documentation,
+        not a real variable use."""
+        src = "profile x {\n  /etc/foo r,  # use @{HOME} here\n}\n"
+        codes = _codes(src)
+        assert "undefined-variable" not in codes
+
+    def test_variable_only_reported_once_per_rule(self):
+        """Even if @{X} appears multiple times in the same rule, only one
+        diagnostic should be emitted."""
+        from apparmor_language_server.diagnostics import get_diagnostics
+        from apparmor_language_server.parser import parse_document
+
+        src = "profile x {\n  @{UNDEF}/a r, @{UNDEF}/b w,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        diags = get_diagnostics(doc, errs)
+        per_rule = [
+            d
+            for d in diags.get("file:///t.aa", [])
+            if d.code == "undefined-variable"
+        ]
+        # Two file rules → at most two diagnostics, not four.
+        assert len(per_rule) <= 2
+
 
 # ── Include checks ────────────────────────────────────────────────────────────
 
