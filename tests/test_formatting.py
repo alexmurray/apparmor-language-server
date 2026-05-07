@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from apparmor_language_server.formatting import FormatterOptions, format_document
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -40,11 +39,6 @@ class TestFormatting:
         src = "profile x {\n  capability sys_admin, chown, kill,\n}\n"
         out = _format(src, sort_capabilities=True)
         assert "chown, kill, sys_admin" in out
-
-    def test_trailing_comma_added(self):
-        src = "profile x {\n  capability kill\n}\n"
-        out = _format(src, ensure_trailing_comma=True)
-        assert "capability kill," in out
 
     def test_hash_include_normalised(self):
         src = "profile x {\n  #include <abstractions/base>\n}\n"

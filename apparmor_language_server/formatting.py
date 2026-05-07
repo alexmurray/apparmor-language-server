@@ -41,21 +41,6 @@ _RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
 _RE_BLANK = re.compile(r"^\s*$")
 _RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*$")
 _RE_INCLUDE_HASH = re.compile(r"^(\s*)#include\b")
-_RE_ENDS_COMMA = re.compile(r",\s*$")
-
-# Lines that should NOT get a trailing comma added:
-_NO_COMMA_PATTERNS = [
-    re.compile(r"^\s*#"),  # comments
-    re.compile(r"^\s*\{"),  # opening braces
-    re.compile(r"^\s*\}"),  # closing braces
-    re.compile(r"^\s*$"),  # blank lines
-    re.compile(r".*\{\s*$"),  # line ending with {
-    re.compile(r"^\s*(profile|hat)\s"),  # profile / hat headers
-    re.compile(r"^\s*include\b"),  # includes don't need commas
-    re.compile(r"^\s*#include\b"),  # same
-    re.compile(r"^\s*@\{[^}]+\}\s*[+]?="),  # variable definitions
-    re.compile(r"^\s*alias\b"),  # aliases
-]
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -65,7 +50,6 @@ _NO_COMMA_PATTERNS = [
 class FormatterOptions:
     indent: str = DEFAULT_INDENT
     sort_capabilities: bool = True
-    ensure_trailing_comma: bool = True
     normalize_include: bool = True  # #include → include
     max_blank_lines: int = 1
 
@@ -148,10 +132,6 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
         # ── Sort parenthesised lists ───────────────────────────────────────
         stripped = _sort_paren_lists(stripped)
 
-        # ── Ensure trailing comma ──────────────────────────────────────────
-        if opts.ensure_trailing_comma:
-            stripped = _ensure_comma(stripped)
-
         # ── Assemble the line ──────────────────────────────────────────────
         new_line = opts.indent * current_depth + stripped
 
@@ -199,21 +179,6 @@ def _sort_paren_lists(line: str) -> str:
             return "(" + " ".join(sorted(parts)) + ")"
 
     return _RE_CAPS_IN_PARENS.sub(sort_match, line)
-
-
-def _ensure_comma(line: str) -> str:
-    """Add trailing comma to rule lines that are missing one."""
-    for pat in _NO_COMMA_PATTERNS:
-        if pat.match(line):
-            return line
-    # If it already ends with comma: leave it
-    if _RE_ENDS_COMMA.search(line):
-        return line
-    # If it ends with { or } skip
-    stripped = line.rstrip()
-    if stripped.endswith("{") or stripped.endswith("}"):
-        return line
-    return stripped + ","
 
 
 def _collapse_blanks(text: str, max_blanks: int) -> str:
