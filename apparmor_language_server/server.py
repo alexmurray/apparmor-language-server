@@ -49,7 +49,6 @@ from lsprotocol.types import (
     WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS,
     WORKSPACE_SYMBOL,
     # Types
-    Diagnostic,
     CompletionList,
     CompletionOptions,
     CompletionParams,

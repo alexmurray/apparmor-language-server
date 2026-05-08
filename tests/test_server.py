@@ -1292,16 +1292,16 @@ class TestPublishDiagnosticsExternalCheck:
 
         published = []
         server.text_document_publish_diagnostics = lambda p: published.append(p)
-        with patch(
-            "apparmor_language_server.server.get_diagnostics", return_value={}
-        ):
+        with patch("apparmor_language_server.server.get_diagnostics", return_value={}):
             server._publish_diagnostics(URI, "profile x { }\n", run_external=True)
         uris_published = [p.uri for p in published]
         assert URI in uris_published
         primary = next(p for p in published if p.uri == URI)
         assert primary.diagnostics == []
 
-    def test_primary_uri_published_on_change_to_clear_internal_diagnostics(self, server):
+    def test_primary_uri_published_on_change_to_clear_internal_diagnostics(
+        self, server
+    ):
         """On a mid-edit pass, the primary URI must always be published so that
         internal diagnostics are cleared immediately when the user edits away
         the offending text."""
@@ -1309,9 +1309,7 @@ class TestPublishDiagnosticsExternalCheck:
 
         published = []
         server.text_document_publish_diagnostics = lambda p: published.append(p)
-        with patch(
-            "apparmor_language_server.server.get_diagnostics", return_value={}
-        ):
+        with patch("apparmor_language_server.server.get_diagnostics", return_value={}):
             server._publish_diagnostics(URI, "profile x { }\n", run_external=False)
         uris_published = [p.uri for p in published]
         assert URI in uris_published
@@ -1336,9 +1334,7 @@ class TestPublishDiagnosticsExternalCheck:
 
         published = []
         server.text_document_publish_diagnostics = lambda p: published.append(p)
-        with patch(
-            "apparmor_language_server.server.get_diagnostics", return_value={}
-        ):
+        with patch("apparmor_language_server.server.get_diagnostics", return_value={}):
             server._publish_diagnostics(URI, "profile x { }\n", run_external=False)
         primary = next(p for p in published if p.uri == URI)
         assert parser_diag in primary.diagnostics
@@ -1349,9 +1345,7 @@ class TestPublishDiagnosticsExternalCheck:
         from unittest.mock import patch
 
         server._parser_diags = {URI: {URI: []}}  # pre-populate with something
-        with patch(
-            "apparmor_language_server.server.get_diagnostics", return_value={}
-        ):
+        with patch("apparmor_language_server.server.get_diagnostics", return_value={}):
             server._publish_diagnostics(URI, "profile x { }\n", run_external=True)
         assert server._parser_diags == {}
 
@@ -1366,7 +1360,7 @@ class TestBackgroundParser:
 
     def test_schedule_sets_debounce_timer(self, server):
         server._edit_version[URI] = 1
-        with patch.object(server, "_run_background_parser") as mock_run:
+        with patch.object(server, "_run_background_parser"):
             server._schedule_background_parser(URI, "profile x { }\n", 1)
             assert URI in server._debounce_timers
             timer = server._debounce_timers[URI]
@@ -1398,10 +1392,13 @@ class TestBackgroundParser:
             source="apparmor_parser",
             severity=DiagnosticSeverity.Error,
         )
-        with patch(
-            "apparmor_language_server.server._check_apparmor_parser",
-            return_value={URI: [parser_diag]},
-        ), patch.object(server, "_publish_diagnostics"):
+        with (
+            patch(
+                "apparmor_language_server.server._check_apparmor_parser",
+                return_value={URI: [parser_diag]},
+            ),
+            patch.object(server, "_publish_diagnostics"),
+        ):
             server._run_background_parser(URI, "profile x { }\n", version=2)
         assert URI in server._parser_diags
         assert parser_diag in server._parser_diags[URI].get(URI, [])
@@ -1418,20 +1415,25 @@ class TestBackgroundParser:
             return {}
 
         server._edit_version[URI] = 1
-        with patch(
-            "apparmor_language_server.server._check_apparmor_parser",
-            side_effect=_slow_check,
-        ), patch.object(server, "_publish_diagnostics") as mock_publish:
+        with (
+            patch(
+                "apparmor_language_server.server._check_apparmor_parser",
+                side_effect=_slow_check,
+            ),
+            patch.object(server, "_publish_diagnostics") as mock_publish,
+        ):
             server._run_background_parser(URI, "profile x { }\n", version=1)
         mock_publish.assert_not_called()
 
     def test_run_background_parser_publishes_when_current(self, server):
         server._edit_version[URI] = 7
-        with patch(
-            "apparmor_language_server.server._check_apparmor_parser",
-            return_value={},
-        ), patch.object(server, "_publish_diagnostics") as mock_publish, patch.object(
-            server, "get_text", return_value="profile x { }\n"
+        with (
+            patch(
+                "apparmor_language_server.server._check_apparmor_parser",
+                return_value={},
+            ),
+            patch.object(server, "_publish_diagnostics") as mock_publish,
+            patch.object(server, "get_text", return_value="profile x { }\n"),
         ):
             server._run_background_parser(URI, "profile x { }\n", version=7)
         mock_publish.assert_called_once_with(URI, "profile x { }\n", run_external=False)
@@ -1488,8 +1490,9 @@ class TestDidSaveCancelsDebounce:
         params = DidSaveTextDocumentParams(
             text_document=TextDocumentIdentifier(uri=URI)
         )
-        with patch.object(server, "_publish_diagnostics"), patch.object(
-            server, "get_text", return_value="profile x { }\n"
+        with (
+            patch.object(server, "_publish_diagnostics"),
+            patch.object(server, "get_text", return_value="profile x { }\n"),
         ):
             did_save(server, params)
         mock_timer.cancel.assert_called_once()

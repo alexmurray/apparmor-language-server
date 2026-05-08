@@ -73,9 +73,9 @@ class TestFormatting:
         )
         out = _format(src)
         lines = out.splitlines()
-        dbus_line = next(l for l in lines if l.lstrip().startswith("dbus"))
-        bus_line = next(l for l in lines if l.lstrip().startswith("bus="))
-        path_line = next(l for l in lines if l.lstrip().startswith("path="))
+        dbus_line = next(ln for ln in lines if ln.lstrip().startswith("dbus"))
+        bus_line = next(ln for ln in lines if ln.lstrip().startswith("bus="))
+        path_line = next(ln for ln in lines if ln.lstrip().startswith("path="))
         assert dbus_line == "  dbus (send)"
         assert bus_line == "      bus=session"
         assert path_line == "      path=/org/freedesktop/DBus,"
@@ -106,8 +106,8 @@ class TestFormatting:
         )
         out = _format(src)
         lines = out.splitlines()
-        include_lines = [l for l in lines if "include" in l]
-        assert all(l.startswith("  include") for l in include_lines)
+        include_lines = [ln for ln in lines if "include" in ln]
+        assert all(ln.startswith("  include") for ln in include_lines)
 
     def test_hash_include_consecutive_not_indented(self):
         # #include lines normalised to include must not trigger continuation.
@@ -119,21 +119,15 @@ class TestFormatting:
         )
         out = _format(src)
         lines = out.splitlines()
-        include_lines = [l for l in lines if "include" in l]
-        assert all(l.startswith("  include") for l in include_lines)
+        include_lines = [ln for ln in lines if "include" in ln]
+        assert all(ln.startswith("  include") for ln in include_lines)
 
     def test_multiline_rule_followed_by_normal_rule(self):
         # After the trailing comma, the next rule returns to normal depth.
-        src = (
-            "profile x {\n"
-            "  dbus (send)\n"
-            "  bus=session,\n"
-            "  capability kill,\n"
-            "}\n"
-        )
+        src = "profile x {\n  dbus (send)\n  bus=session,\n  capability kill,\n}\n"
         out = _format(src)
         lines = out.splitlines()
-        bus_line = next(l for l in lines if l.lstrip().startswith("bus="))
-        cap_line = next(l for l in lines if l.lstrip().startswith("capability"))
+        bus_line = next(ln for ln in lines if ln.lstrip().startswith("bus="))
+        cap_line = next(ln for ln in lines if ln.lstrip().startswith("capability"))
         assert bus_line == "      bus=session,"
         assert cap_line == "  capability kill,"

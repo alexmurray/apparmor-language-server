@@ -844,7 +844,7 @@ class TestStructuredFields:
         from apparmor_language_server.parser import DbusRuleNode
 
         node = self._rule(
-            'profile x {\n  dbus (send) bus=session path=/org/example interface=org.example.X,\n}\n',
+            "profile x {\n  dbus (send) bus=session path=/org/example interface=org.example.X,\n}\n",
             DbusRuleNode,
         )
         assert node.permissions == ["send"]
@@ -970,7 +970,7 @@ class TestStructuredFields:
         from apparmor_language_server.parser import DbusRuleNode
 
         node = self._rule(
-            'profile x {\n  dbus (send) bus=session,  # talk to session bus\n}\n',
+            "profile x {\n  dbus (send) bus=session,  # talk to session bus\n}\n",
             DbusRuleNode,
         )
         assert node.bus == "session"
