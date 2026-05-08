@@ -30,7 +30,7 @@ from lsprotocol.types import (
     TextEdit,
 )
 
-from .constants import DEFAULT_INDENT
+from .constants import DEFAULT_INDENT, RE_BLANK, RE_CLOSE_BRACE, RE_INCLUDE_GLOB
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -38,11 +38,7 @@ _RE_CAPABILITY_RULE = re.compile(
     r"^(\s*(?:deny\s+|audit\s+)?capability)\s+([\w][\w,\s]*?)\s*(,?)\s*$"
 )
 _RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
-_RE_BLANK = re.compile(r"^\s*$")
-_RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*$")
-_RE_INCLUDE_HASH = re.compile(r"^(\s*)#include\b")
-# Lines that never trigger multi-line rule continuation (no trailing comma by design).
-_RE_NO_CONTINUATION = re.compile(r"^\s*(?:include\s|#include\s)")
+_RE_INCLUDE_HASH = re.compile(r"^#include\b")
 
 # Extra indent levels applied to continuation lines of a multi-line rule.
 _CONTINUATION_EXTRA = 2
@@ -104,7 +100,7 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
         line = raw_line.rstrip()
 
         # ── Blank line ─────────────────────────────────────────────────────
-        if _RE_BLANK.match(line):
+        if RE_BLANK.match(line):
             in_continuation = False
             if prev_blank < opts.max_blank_lines:
                 result.append("")
@@ -113,7 +109,7 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
         prev_blank = 0
 
         # ── Closing brace ──────────────────────────────────────────────────
-        if _RE_CLOSE_BRACE.match(line):
+        if RE_CLOSE_BRACE.match(line):
             in_continuation = False
             depth = max(0, depth - 1)
             result.append(opts.indent * depth + "}")
@@ -131,7 +127,7 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
 
         # ── Normalize #include → include ───────────────────────────────────
         if opts.normalize_include and _RE_INCLUDE_HASH.match(stripped):
-            stripped = stripped[1:]  # remove leading '#'
+            stripped = stripped[1:]  # strip leading '#' from '#include'
 
         # ── Sort capabilities ──────────────────────────────────────────────
         if opts.sort_capabilities:
@@ -154,7 +150,7 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
         elif (
             not stripped.startswith("#")
             and not stripped.endswith(",")
-            and not _RE_NO_CONTINUATION.match(stripped)
+            and not RE_INCLUDE_GLOB.match(stripped)
         ):
             in_continuation = True
         else:

@@ -1020,3 +1020,9 @@ PROFILE_FLAGS: list[str] = list(FLAG_DEFS.keys())
 # ── Indentation used by the formatter ────────────────────────────────────────
 
 DEFAULT_INDENT = "  "  # two spaces
+
+# ── Shared regex patterns (used by parser and formatter) ─────────────────────
+
+RE_BLANK = re.compile(r"^\s*$")
+RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*,?\s*$")
+RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]?""")

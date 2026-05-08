@@ -23,16 +23,17 @@ from .constants import (
     DEFAULT_INCLUDE_SEARCH_DIRS,
     KEYWORD_DEFS,
     QUALIFIERS,
+    RE_BLANK,
+    RE_CLOSE_BRACE,
     RE_FILE_PERMISSIONS,
+    RE_INCLUDE_GLOB,
     SIGNAL_PERMISSIONS,
 )
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-RE_BLANK = re.compile(r"^\s*$")
 RE_COMMENT = re.compile(r"^\s*#.*$")
 RE_ABI_GLOB = re.compile(r"""^\s*#?abi\s+[<"]([^>"]+)[>"],""")
-RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]?""")
 RE_INCLUDE_IF = re.compile(r"""^\s*include\s+if\s+exists\s+[<"]([^>"]+)[>"]?""")
 RE_VARIABLE_DEF = re.compile(
     r"^\s*(@\{[A-Za-z_][A-Za-z0-9_]*\})\s*(?:\+=|\?=|:=|=)\s*(.*)$"
@@ -52,7 +53,6 @@ _PROFILE_OPEN_PAT = (
 )
 RE_PROFILE_OPEN = re.compile(_PROFILE_OPEN_PAT)
 RE_HAT_OPEN = re.compile(r"^\s*hat\s+(?P<n>\S+)\s*\{")
-RE_PROFILE_CLOSE = re.compile(r"^\s*\}\s*,?\s*$")
 
 _RE_QUALIFIERS = re.compile(r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS) + r")\s+)*)")
 RE_CAPABILITY = re.compile(
@@ -1241,7 +1241,7 @@ class Parser:
                 break
             if RE_COMMENT.match(line) and not RE_INCLUDE_GLOB.match(line):
                 break
-            if RE_PROFILE_CLOSE.match(line):
+            if RE_CLOSE_BRACE.match(line):
                 break
             raw_lines.append(line)
             self._advance()
