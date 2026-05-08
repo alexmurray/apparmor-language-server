@@ -6,6 +6,7 @@ Run with: pytest tests/test_server.py -v
 from __future__ import annotations
 
 import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 from apparmor_language_server.parser import (
@@ -82,6 +83,7 @@ class MockLS:
         self._cache_lock = threading.RLock()
         self._settings_lock = threading.Lock()
         self._indexing = False
+        self._edit_version: dict[str, int] = {}
         if text:
             self._texts[uri] = text
 
@@ -106,6 +108,9 @@ class MockLS:
 
     def _publish_diagnostics(self, uri: str, text: str) -> None:
         self.parse_and_cache(uri, text)
+
+    def _schedule_background_parser(self, uri: str, text: str, version: int) -> None:
+        pass
 
 
 def _ls(text: str = SIMPLE_PROFILE) -> MockLS:
@@ -1327,7 +1332,7 @@ class TestPublishDiagnosticsExternalCheck:
             severity=DiagnosticSeverity.Error,
         )
         # Seed the cache as if a prior save had found a parser error.
-        server._parser_diags = {URI: [parser_diag]}
+        server._parser_diags = {URI: {URI: [parser_diag]}}
 
         published = []
         server.text_document_publish_diagnostics = lambda p: published.append(p)
@@ -1343,9 +1348,149 @@ class TestPublishDiagnosticsExternalCheck:
         be cleared so mid-edit passes no longer re-inject stale diagnostics."""
         from unittest.mock import patch
 
-        server._parser_diags = {URI: []}  # pre-populate with something
+        server._parser_diags = {URI: {URI: []}}  # pre-populate with something
         with patch(
             "apparmor_language_server.server.get_diagnostics", return_value={}
         ):
             server._publish_diagnostics(URI, "profile x { }\n", run_external=True)
         assert server._parser_diags == {}
+
+
+# ── _schedule_background_parser / _run_background_parser ─────────────────────
+
+
+class TestBackgroundParser:
+    @pytest.fixture
+    def server(self):
+        return AppArmorLanguageServer()
+
+    def test_schedule_sets_debounce_timer(self, server):
+        server._edit_version[URI] = 1
+        with patch.object(server, "_run_background_parser") as mock_run:
+            server._schedule_background_parser(URI, "profile x { }\n", 1)
+            assert URI in server._debounce_timers
+            timer = server._debounce_timers[URI]
+            timer.cancel()
+
+    def test_schedule_cancels_previous_timer(self, server):
+        server._edit_version[URI] = 1
+        old_timer = MagicMock()
+        server._debounce_timers[URI] = old_timer
+        server._schedule_background_parser(URI, "profile x { }\n", 1)
+        old_timer.cancel.assert_called_once()
+        server._debounce_timers.get(URI, MagicMock()).cancel()
+
+    def test_run_background_parser_discards_stale_version(self, server):
+        server._edit_version[URI] = 5  # newer than the captured version
+        with patch(
+            "apparmor_language_server.server._check_apparmor_parser"
+        ) as mock_check:
+            server._run_background_parser(URI, "profile x { }\n", version=3)
+        mock_check.assert_not_called()
+
+    def test_run_background_parser_stores_results_when_current(self, server):
+        from lsprotocol.types import Diagnostic, DiagnosticSeverity, Position, Range
+
+        server._edit_version[URI] = 2
+        parser_diag = Diagnostic(
+            range=Range(start=Position(0, 0), end=Position(0, 5)),
+            message="err",
+            source="apparmor_parser",
+            severity=DiagnosticSeverity.Error,
+        )
+        with patch(
+            "apparmor_language_server.server._check_apparmor_parser",
+            return_value={URI: [parser_diag]},
+        ), patch.object(server, "_publish_diagnostics"):
+            server._run_background_parser(URI, "profile x { }\n", version=2)
+        assert URI in server._parser_diags
+        assert parser_diag in server._parser_diags[URI].get(URI, [])
+
+    def test_run_background_parser_discards_if_superseded_during_run(self, server):
+        """Version matches pre-check but changes while subprocess runs."""
+        call_count = 0
+
+        def _slow_check(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Simulate another edit arriving while the parser runs.
+            server._edit_version[URI] = 99
+            return {}
+
+        server._edit_version[URI] = 1
+        with patch(
+            "apparmor_language_server.server._check_apparmor_parser",
+            side_effect=_slow_check,
+        ), patch.object(server, "_publish_diagnostics") as mock_publish:
+            server._run_background_parser(URI, "profile x { }\n", version=1)
+        mock_publish.assert_not_called()
+
+    def test_run_background_parser_publishes_when_current(self, server):
+        server._edit_version[URI] = 7
+        with patch(
+            "apparmor_language_server.server._check_apparmor_parser",
+            return_value={},
+        ), patch.object(server, "_publish_diagnostics") as mock_publish, patch.object(
+            server, "get_text", return_value="profile x { }\n"
+        ):
+            server._run_background_parser(URI, "profile x { }\n", version=7)
+        mock_publish.assert_called_once_with(URI, "profile x { }\n", run_external=False)
+
+
+# ── evict cleans up background-parser state ───────────────────────────────────
+
+
+class TestEvictCleansUpBackgroundState:
+    @pytest.fixture
+    def server(self):
+        return AppArmorLanguageServer()
+
+    def test_evict_cancels_pending_debounce_timer(self, server):
+        mock_timer = MagicMock()
+        server._debounce_timers[URI] = mock_timer
+        server.evict(URI)
+        mock_timer.cancel.assert_called_once()
+        assert URI not in server._debounce_timers
+
+    def test_evict_removes_outer_parser_diags_key(self, server):
+        server._parser_diags[URI] = {URI: []}
+        server.evict(URI)
+        assert URI not in server._parser_diags
+
+    def test_evict_removes_uri_from_inner_parser_diags(self, server):
+        other = "file:///other.aa"
+        server._parser_diags[other] = {URI: [], other: []}
+        server.evict(URI)
+        assert URI not in server._parser_diags[other]
+        assert other in server._parser_diags[other]
+
+    def test_evict_removes_edit_version(self, server):
+        server._edit_version[URI] = 3
+        server.evict(URI)
+        assert URI not in server._edit_version
+
+
+# ── did_save cancels pending debounce ─────────────────────────────────────────
+
+
+class TestDidSaveCancelsDebounce:
+    @pytest.fixture
+    def server(self):
+        return AppArmorLanguageServer()
+
+    def test_did_save_cancels_pending_background_timer(self, server):
+        from apparmor_language_server.server import did_save
+        from lsprotocol.types import DidSaveTextDocumentParams, TextDocumentIdentifier
+
+        mock_timer = MagicMock()
+        server._debounce_timers[URI] = mock_timer
+
+        params = DidSaveTextDocumentParams(
+            text_document=TextDocumentIdentifier(uri=URI)
+        )
+        with patch.object(server, "_publish_diagnostics"), patch.object(
+            server, "get_text", return_value="profile x { }\n"
+        ):
+            did_save(server, params)
+        mock_timer.cancel.assert_called_once()
+        assert URI not in server._debounce_timers

@@ -83,7 +83,7 @@ from pygls.lsp.server import LanguageServer
 from ._text import code_end as _code_end
 from .completions import get_completions
 from .constants import DEFAULT_INCLUDE_SEARCH_DIRS
-from .diagnostics import get_diagnostics
+from .diagnostics import _check_apparmor_parser, get_diagnostics
 from .formatting import FormatterOptions, format_document
 from .hover import get_hover
 from .indexer import WorkspaceIndexer
@@ -104,6 +104,10 @@ from .parser import (
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 logger = logging.getLogger(__name__)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+_PARSER_DEBOUNCE_DELAY: float = 0.3
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -171,16 +175,23 @@ class AppArmorLanguageServer(LanguageServer):
         # uri → (DocumentNode, [ParseError])
         self._doc_cache: dict[str, tuple[DocumentNode, list[ParseError]]] = {}
         self._cache_lock: threading.RLock = threading.RLock()
-        # Last known apparmor_parser diagnostics per URI, refreshed on every
-        # did_open / did_save pass and re-injected into did_change results so
-        # parser errors remain visible while the user is editing unsaved text.
-        self._parser_diags: dict[str, list[Diagnostic]] = {}
         # True while the background indexer is scanning workspace folders.
         # All result-returning handlers return empty while this is set.
         self._indexing: bool = False
         self._indexer: Optional[WorkspaceIndexer] = None
         self._settings: Settings = Settings()
         self._settings_lock: threading.Lock = threading.Lock()
+        # Two-level dict: outer key = "checked URI" (the file whose content we
+        # ran apparmor_parser on); inner dict = diagnostic URI → list of
+        # diagnostics.  This prevents saving file A from wiping parser diags
+        # produced for file B.
+        self._parser_diags: dict[str, dict[str, list]] = {}
+        self._parser_diags_lock: threading.Lock = threading.Lock()
+        # Per-URI edit counter; incremented on every did_change so background
+        # parser jobs can detect stale runs and discard their results.
+        self._edit_version: dict[str, int] = {}
+        # Pending debounce timers, keyed by URI.
+        self._debounce_timers: dict[str, threading.Timer] = {}
 
     # ── Settings helpers ──────────────────────────────────────────────────────
 
@@ -254,8 +265,18 @@ class AppArmorLanguageServer(LanguageServer):
             return self._doc_cache.get(uri)
 
     def evict(self, uri: str) -> None:
+        # Cancel any pending background-parser debounce timer for this URI.
+        timer = self._debounce_timers.pop(uri, None)
+        if timer is not None:
+            timer.cancel()
         with self._cache_lock:
             self._doc_cache.pop(uri, None)
+        with self._parser_diags_lock:
+            # Remove the top-level entry for this URI and any inner entries.
+            self._parser_diags.pop(uri, None)
+            for inner in self._parser_diags.values():
+                inner.pop(uri, None)
+        self._edit_version.pop(uri, None)
 
     # ── Text helpers ──────────────────────────────────────────────────────────
 
@@ -270,10 +291,9 @@ class AppArmorLanguageServer(LanguageServer):
     ) -> None:
         """Re-parse *uri* and publish diagnostics.
 
-        ``run_external`` enables the apparmor_parser subprocess check, which
-        operates on the on-disk file. Callers should pass ``True`` only for
-        save-time events so we don't surface stale parser errors mid-edit
-        and don't spawn a subprocess on every keystroke.
+        ``run_external`` enables the on-disk apparmor_parser subprocess check
+        (did_save / did_open path).  Background stdin-based parser results are
+        injected via ``_parser_diags`` and merged in when ``run_external=False``.
         """
         doc, errors = self.parse_and_cache(uri, text)
         with self._settings_lock:
@@ -288,28 +308,75 @@ class AppArmorLanguageServer(LanguageServer):
             document_path=document_path,
             apparmor_parser_path=self._get_apparmor_parser_path(),
         )
+
         if run_external:
-            # Refresh the cache with whatever apparmor_parser reported this pass
-            # (identified by source). An empty result means no parser errors —
-            # the cache is cleared so mid-edit passes stop re-injecting them.
-            self._parser_diags = {
-                k: [d for d in v if d.source == "apparmor_parser"]
-                for k, v in diags.items()
-                if any(d.source == "apparmor_parser" for d in v)
-            }
+            # Store fresh on-disk parser results keyed by the URI we checked.
+            # Remove the entry entirely when there are no errors so stale
+            # diagnostics from a prior save are not re-injected on mid-edit passes.
+            with self._parser_diags_lock:
+                filtered = {
+                    k: [d for d in v if d.source == "apparmor_parser"]
+                    for k, v in diags.items()
+                }
+                if any(filtered.values()):
+                    self._parser_diags[uri] = filtered
+                else:
+                    self._parser_diags.pop(uri, None)
         else:
-            # Re-inject cached parser diagnostics so they remain visible while
-            # the user edits unsaved text.
-            for k, v in self._parser_diags.items():
-                diags.setdefault(k, []).extend(v)
-        # Always publish for the primary URI so that cleared internal
-        # diagnostics (e.g. user deleted the offending text) are removed from
-        # the editor immediately rather than waiting for the next save.
+            # Merge in cached background-parser diagnostics from all checked URIs.
+            with self._parser_diags_lock:
+                merged: dict[str, list] = {}
+                for inner in self._parser_diags.values():
+                    for diag_uri, diag_list in inner.items():
+                        merged.setdefault(diag_uri, []).extend(diag_list)
+            for diag_uri, diag_list in merged.items():
+                diags.setdefault(diag_uri, []).extend(diag_list)
+
         diags.setdefault(uri, [])
         for diag_uri, d in diags.items():
             self.text_document_publish_diagnostics(
                 PublishDiagnosticsParams(uri=diag_uri, diagnostics=d)
             )
+
+    def _schedule_background_parser(self, uri: str, text: str, version: int) -> None:
+        """Debounce and schedule a background apparmor_parser stdin check."""
+        # Cancel any previously scheduled timer for this URI.
+        existing = self._debounce_timers.pop(uri, None)
+        if existing is not None:
+            existing.cancel()
+
+        def _callback() -> None:
+            self._debounce_timers.pop(uri, None)
+            self.thread_pool.submit(self._run_background_parser, uri, text, version)
+
+        timer = threading.Timer(_PARSER_DEBOUNCE_DELAY, _callback)
+        self._debounce_timers[uri] = timer
+        timer.start()
+
+    def _run_background_parser(self, uri: str, text: str, version: int) -> None:
+        """Run apparmor_parser via stdin in a thread-pool worker.
+
+        Discards results if the document has been edited since *version* was
+        captured (stale check) or if a newer run has already superseded this one.
+        """
+        if self._edit_version.get(uri) != version:
+            return  # stale — a newer edit is already in flight
+
+        parser_result = _check_apparmor_parser(
+            None, uri, self._get_apparmor_parser_path(), text=text
+        )
+
+        if self._edit_version.get(uri) != version:
+            return  # superseded while the subprocess was running
+
+        with self._parser_diags_lock:
+            self._parser_diags[uri] = {
+                k: [d for d in v if d.source == "apparmor_parser"]
+                for k, v in parser_result.items()
+            }
+
+        current_text = self.get_text(uri) or ""
+        self._publish_diagnostics(uri, current_text, run_external=False)
 
 
 # ── Server instance ───────────────────────────────────────────────────────────
@@ -322,10 +389,10 @@ server = AppArmorLanguageServer()
 
 @server.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(ls: AppArmorLanguageServer, params: DidOpenTextDocumentParams):
-    logger.info("Opened: %s", params.text_document.uri)
-    ls._publish_diagnostics(
-        params.text_document.uri, params.text_document.text, run_external=True
-    )
+    uri = params.text_document.uri
+    logger.info("Opened: %s", uri)
+    ls._edit_version[uri] = 0
+    ls._publish_diagnostics(uri, params.text_document.text, run_external=True)
 
 
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)
@@ -337,12 +404,19 @@ def did_change(ls: AppArmorLanguageServer, params: DidChangeTextDocumentParams):
     # params.content_changes[-1].text is only the changed fragment in incremental mode.
     text = ls.get_text(uri) or ""
     ls._publish_diagnostics(uri, text)
+    ls._edit_version[uri] = ls._edit_version.get(uri, 0) + 1
+    ls._schedule_background_parser(uri, text, ls._edit_version[uri])
 
 
 @server.feature(TEXT_DOCUMENT_DID_SAVE)
 def did_save(ls: AppArmorLanguageServer, params: DidSaveTextDocumentParams):
     uri = params.text_document.uri
     logger.debug("Saved: %s", uri)
+    # Cancel any pending background-parser debounce for this URI: the on-disk
+    # save check below will provide a fresh authoritative result.
+    timer = ls._debounce_timers.pop(uri, None)
+    if timer is not None:
+        timer.cancel()
     text = ls.get_text(uri) or ""
     ls._publish_diagnostics(uri, text, run_external=True)
 

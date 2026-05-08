@@ -579,6 +579,52 @@ class TestCheckApparmorParser:
         assert "-Q" in args
         assert "-K" in args
 
+    def test_both_none_returns_empty(self):
+        result = _check_apparmor_parser(None, _FAKE_URI, None)
+        assert result == {}
+
+    def test_stdin_mode_uses_dev_stdin_path_arg(self):
+        with patch(
+            "apparmor_language_server.diagnostics._find_apparmor_parser",
+            return_value="/usr/sbin/apparmor_parser",
+        ), patch("subprocess.run", return_value=_parser_result("", returncode=0)) as mock_run:
+            _check_apparmor_parser(None, _FAKE_URI, None, text="profile x { }\n")
+        args = mock_run.call_args[0][0]
+        assert args[-1] == "/dev/stdin"
+
+    def test_stdin_mode_passes_text_as_input(self):
+        content = "profile x { }\n"
+        with patch(
+            "apparmor_language_server.diagnostics._find_apparmor_parser",
+            return_value="/usr/sbin/apparmor_parser",
+        ), patch("subprocess.run", return_value=_parser_result("", returncode=0)) as mock_run:
+            _check_apparmor_parser(None, _FAKE_URI, None, text=content)
+        assert mock_run.call_args.kwargs.get("input") == content
+
+    def test_stdin_mode_error_mapped_to_doc_uri_with_correct_line(self):
+        stderr = (
+            "AppArmor parser error for /dev/stdin in profile "
+            "/dev/stdin at line 3: syntax error\n"
+        )
+        with patch(
+            "apparmor_language_server.diagnostics._find_apparmor_parser",
+            return_value="/usr/sbin/apparmor_parser",
+        ), patch("subprocess.run", return_value=_parser_result(stderr)):
+            result = _check_apparmor_parser(None, _FAKE_URI, None, text="profile x { }\n")
+        assert _FAKE_URI in result
+        diags = result[_FAKE_URI]
+        assert len(diags) == 1
+        assert diags[0].range.start.line == 2  # 0-based: line 3 → index 2
+        assert "syntax error" in diags[0].message
+
+    def test_stdin_mode_clean_result_returns_empty(self):
+        with patch(
+            "apparmor_language_server.diagnostics._find_apparmor_parser",
+            return_value="/usr/sbin/apparmor_parser",
+        ), patch("subprocess.run", return_value=_parser_result("", returncode=0)):
+            result = _check_apparmor_parser(None, _FAKE_URI, None, text="profile x { }\n")
+        assert result == {}
+
 
 class TestSnapParserExtraArgs:
     def test_no_snap_env_returns_empty(self, monkeypatch):

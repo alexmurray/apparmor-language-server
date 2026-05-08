@@ -172,39 +172,56 @@ def _find_apparmor_parser(configured_path: str) -> Optional[str]:
 
 
 def _check_apparmor_parser(
-    document_path: Path,
+    document_path: Optional[Path],
     uri: str,
     apparmor_parser_path: Optional[str],
+    text: Optional[str] = None,
 ) -> dict[str, list[Diagnostic]]:
-    """Run apparmor_parser -Q -K against document_path; return diagnostics by URI.
+    """Run apparmor_parser -Q -K against document_path or stdin; return diagnostics by URI.
+
+    When *text* is provided the profile content is passed via stdin (using
+    ``/dev/stdin`` as the path argument) so the file does not need to exist on
+    disk.  When neither *text* nor *document_path* is given, return ``{}``.
 
     Errors in included files are attached to those files' URIs so editors
     navigate directly to the offending line.
     """
+    if text is None and document_path is None:
+        return {}
+
     parser_bin = _find_apparmor_parser(apparmor_parser_path or "")
     if parser_bin is None:
         logger.debug("apparmor_parser not found; skipping external parse check")
         return {}
 
     extra_args = _snap_parser_extra_args()
+    if text is not None:
+        path_arg = "/dev/stdin"
+    else:
+        path_arg = str(document_path)
     logger.debug(
         "Running %s -Q -K %s%s",
         parser_bin,
-        document_path,
+        path_arg,
         f" (snap args: {extra_args})" if extra_args else "",
     )
     try:
-        result = subprocess.run(
-            [parser_bin, "-Q", "-K", *extra_args, str(document_path)],
+        run_kwargs: dict = dict(
             capture_output=True,
             text=True,
             timeout=10,
+        )
+        if text is not None:
+            run_kwargs["input"] = text
+        result = subprocess.run(
+            [parser_bin, "-Q", "-K", *extra_args, path_arg],
+            **run_kwargs,
         )
     except FileNotFoundError:
         logger.warning("apparmor_parser binary not found: %s", parser_bin)
         return {}
     except subprocess.TimeoutExpired:
-        logger.warning("apparmor_parser timed out parsing %s", document_path)
+        logger.warning("apparmor_parser timed out parsing %s", path_arg)
         return {}
     except OSError as exc:
         logger.warning("apparmor_parser invocation failed: %s", exc)
@@ -223,13 +240,18 @@ def _check_apparmor_parser(
         if m:
             source_file_str, lineno_str, message = m.group(1), m.group(2), m.group(3)
             lineno = max(0, int(lineno_str) - 1)  # apparmor_parser is 1-based
-            source_path = Path(source_file_str)
-            if source_path.is_absolute() and source_path.exists():
-                diag_uri = source_path.as_uri()
-            else:
-                # Can't resolve the source file; attach to the top-level document
+            if source_file_str == "/dev/stdin":
+                # stdin mode: map the virtual path back to the document URI and
+                # keep the line number as reported (already converted to 0-based).
                 diag_uri = uri
-                lineno = 0
+            else:
+                source_path = Path(source_file_str)
+                if source_path.is_absolute() and source_path.exists():
+                    diag_uri = source_path.as_uri()
+                else:
+                    # Can't resolve the source file; attach to the top-level document
+                    diag_uri = uri
+                    lineno = 0
             diags.setdefault(diag_uri, []).append(
                 Diagnostic(
                     range=Range(
