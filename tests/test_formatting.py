@@ -61,3 +61,52 @@ class TestFormatting:
         first = _format(src)
         edits = format_document(first, FormatterOptions())
         assert len(edits) == 0
+
+    def test_multiline_rule_continuation_indented(self):
+        # Continuation lines (no trailing comma) must get extra indent.
+        src = (
+            "profile x {\n"
+            "  dbus (send)\n"
+            "  bus=session\n"
+            "  path=/org/freedesktop/DBus,\n"
+            "}\n"
+        )
+        out = _format(src)
+        lines = out.splitlines()
+        dbus_line = next(l for l in lines if l.lstrip().startswith("dbus"))
+        bus_line = next(l for l in lines if l.lstrip().startswith("bus="))
+        path_line = next(l for l in lines if l.lstrip().startswith("path="))
+        assert dbus_line == "  dbus (send)"
+        assert bus_line == "      bus=session"
+        assert path_line == "      path=/org/freedesktop/DBus,"
+
+    def test_multiline_rule_already_correct_is_idempotent(self):
+        src = (
+            "profile x {\n"
+            "  dbus (send)\n"
+            "      bus=session\n"
+            "      path=/org/freedesktop/DBus\n"
+            "      interface=org.freedesktop.DBus\n"
+            '      member="{Request,Release}Name"\n'
+            "      peer=(label=unconfined, name=org.freedesktop.DBus),\n"
+            "}\n"
+        )
+        out = _format(src)
+        edits = format_document(out, FormatterOptions())
+        assert len(edits) == 0
+
+    def test_multiline_rule_followed_by_normal_rule(self):
+        # After the trailing comma, the next rule returns to normal depth.
+        src = (
+            "profile x {\n"
+            "  dbus (send)\n"
+            "  bus=session,\n"
+            "  capability kill,\n"
+            "}\n"
+        )
+        out = _format(src)
+        lines = out.splitlines()
+        bus_line = next(l for l in lines if l.lstrip().startswith("bus="))
+        cap_line = next(l for l in lines if l.lstrip().startswith("capability"))
+        assert bus_line == "      bus=session,"
+        assert cap_line == "  capability kill,"

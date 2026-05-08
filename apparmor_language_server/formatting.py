@@ -42,6 +42,9 @@ _RE_BLANK = re.compile(r"^\s*$")
 _RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*$")
 _RE_INCLUDE_HASH = re.compile(r"^(\s*)#include\b")
 
+# Extra indent levels applied to continuation lines of a multi-line rule.
+_CONTINUATION_EXTRA = 2
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -93,12 +96,14 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
     result: list[str] = []
     depth: int = 0
     prev_blank: int = 0  # consecutive blank lines emitted
+    in_continuation: bool = False  # inside a multi-line rule
 
     for i, raw_line in enumerate(lines):
         line = raw_line.rstrip()
 
         # ── Blank line ─────────────────────────────────────────────────────
         if _RE_BLANK.match(line):
+            in_continuation = False
             if prev_blank < opts.max_blank_lines:
                 result.append("")
                 prev_blank += 1
@@ -107,6 +112,7 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
 
         # ── Closing brace ──────────────────────────────────────────────────
         if _RE_CLOSE_BRACE.match(line):
+            in_continuation = False
             depth = max(0, depth - 1)
             result.append(opts.indent * depth + "}")
             continue
@@ -133,9 +139,20 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
         stripped = _sort_paren_lists(stripped)
 
         # ── Assemble the line ──────────────────────────────────────────────
-        new_line = opts.indent * current_depth + stripped
+        # Continuation lines of a multi-line rule get extra indentation.
+        indent_depth = current_depth + (_CONTINUATION_EXTRA if in_continuation else 0)
+        new_line = opts.indent * indent_depth + stripped
 
         result.append(new_line)
+
+        # ── Update continuation state for next line ────────────────────────
+        if opens > 0:
+            # Opening a new block (profile/hat header) – not a continuation.
+            in_continuation = False
+        elif not stripped.startswith("#") and not stripped.endswith(","):
+            in_continuation = True
+        else:
+            in_continuation = False
 
         # Adjust depth for subsequent lines
         depth = max(0, depth + opens)
