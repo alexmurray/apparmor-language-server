@@ -30,12 +30,19 @@ from lsprotocol.types import (
     TextEdit,
 )
 
-from .constants import DEFAULT_INDENT, RE_BLANK, RE_CLOSE_BRACE, RE_INCLUDE_GLOB
+from .constants import (
+    DEFAULT_INDENT,
+    RE_BLANK,
+    RE_CLOSE_BRACE,
+    RE_INCLUDE_GLOB,
+    RE_QUALIFIERS,
+)
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
 _RE_CAPABILITY_RULE = re.compile(
-    r"^(\s*(?:deny\s+|audit\s+)?capability)\s+([\w][\w,\s]*?)\s*(,?)\s*$"
+    RE_QUALIFIERS.pattern
+    + r"capability\b\s+(?P<caps>[\w][\w,\s]*?)\s*(?P<comma>,?)\s*$"
 )
 _RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
 _RE_INCLUDE_HASH = re.compile(r"^#include\b")
@@ -175,13 +182,9 @@ def _sort_capabilities(line: str) -> str:
     m = _RE_CAPABILITY_RULE.match(line)
     if not m:
         return line
-    prefix = m.group(1)  # e.g. '  capability'
-    caps_str = m.group(2).strip()
-    suffix = m.group(3)  # trailing comma + optional spaces
-
-    caps = sorted(c.strip() for c in caps_str.split(",") if c.strip())
-    trailing = "," if suffix.strip() == "," else suffix
-    return f"{prefix} {', '.join(caps)}{trailing}"
+    prefix = line[: m.start("caps")].rstrip()
+    caps = sorted(c.strip() for c in m.group("caps").split(",") if c.strip())
+    return f"{prefix} {', '.join(caps)}{m.group('comma')}"
 
 
 def _sort_paren_lists(line: str) -> str:

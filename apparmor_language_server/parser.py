@@ -27,6 +27,7 @@ from .constants import (
     RE_CLOSE_BRACE,
     RE_FILE_PERMISSIONS,
     RE_INCLUDE_GLOB,
+    RE_QUALIFIERS,
     SIGNAL_PERMISSIONS,
 )
 
@@ -54,15 +55,14 @@ _PROFILE_OPEN_PAT = (
 RE_PROFILE_OPEN = re.compile(_PROFILE_OPEN_PAT)
 RE_HAT_OPEN = re.compile(r"^\s*hat\s+(?P<n>\S+)\s*\{")
 
-_RE_QUALIFIERS = re.compile(r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS) + r")\s+)*)")
 RE_CAPABILITY = re.compile(
-    _RE_QUALIFIERS.pattern + r"?capability\b\s*(?P<caps>[^{}\n]*?)\s*,?\s*$"
+    RE_QUALIFIERS.pattern + r"?capability\b\s*(?P<caps>[^{}\n]*?)\s*,?\s*$"
 )
 RE_NETWORK = re.compile(
-    _RE_QUALIFIERS.pattern + r"?network\b\s*(?P<rest>[^{}\n,]*?)\s*,?\s*$"
+    RE_QUALIFIERS.pattern + r"?network\b\s*(?P<rest>[^{}\n,]*?)\s*,?\s*$"
 )
 RE_SIGNAL = re.compile(
-    _RE_QUALIFIERS.pattern + r"signal\b\s*(?P<rest>[^{}\n]*?)\s*,?\s*$"
+    RE_QUALIFIERS.pattern + r"signal\b\s*(?P<rest>[^{}\n]*?)\s*,?\s*$"
 )
 
 _RE_SIGNAL_PAREN_PERMS = re.compile(r"^\s*\(([^)]*)\)")

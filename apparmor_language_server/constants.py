@@ -60,6 +60,7 @@ QUALIFIER_DEFS: dict[str, KeywordDef] = {
 }
 
 QUALIFIERS: list[str] = list(QUALIFIER_DEFS.keys())
+RE_QUALIFIERS = re.compile(r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS) + r")\s+)*)")
 
 # ── Linux capabilities ────────────────────────────────────────────────────────
 # Maps each capability name to its KeywordDef; doc is the full hover Markdown.
