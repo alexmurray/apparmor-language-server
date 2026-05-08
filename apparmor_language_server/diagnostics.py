@@ -25,6 +25,7 @@ Checks performed
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -51,6 +52,7 @@ from .constants import (
     PTRACE_PERMISSIONS,
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
+    SNAP_HOSTFS,
 )
 from .parser import (
     ABINode,
@@ -145,6 +147,18 @@ def _add(
 # ── apparmor_parser integration ───────────────────────────────────────────────
 
 
+def _snap_parser_extra_args() -> list[str]:
+    """Return extra apparmor_parser args needed under snap confinement, else []."""
+    if not os.environ.get("SNAP"):
+        return []
+    return [
+        "--base",
+        str(SNAP_HOSTFS / "etc/apparmor.d"),
+        "--config-file",
+        str(SNAP_HOSTFS / "etc/apparmor/parser.conf"),
+    ]
+
+
 def _find_apparmor_parser(configured_path: str) -> Optional[str]:
     """Return the executable path for apparmor_parser, or None if unavailable."""
     if configured_path:
@@ -172,10 +186,16 @@ def _check_apparmor_parser(
         logger.debug("apparmor_parser not found; skipping external parse check")
         return {}
 
-    logger.debug("Running %s -Q -K %s", parser_bin, document_path)
+    extra_args = _snap_parser_extra_args()
+    logger.debug(
+        "Running %s -Q -K %s%s",
+        parser_bin,
+        document_path,
+        f" (snap args: {extra_args})" if extra_args else "",
+    )
     try:
         result = subprocess.run(
-            [parser_bin, "-Q", "-K", str(document_path)],
+            [parser_bin, "-Q", "-K", *extra_args, str(document_path)],
             capture_output=True,
             text=True,
             timeout=10,

@@ -4,6 +4,7 @@ AppArmor LSP – constants: keywords, permissions, capabilities etc.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from itertools import chain, combinations
@@ -14,10 +15,19 @@ from pathlib import Path
 # resolve relative to the current document. Override via the
 # `apparmor.includeSearchPaths` workspace setting.
 
-DEFAULT_INCLUDE_SEARCH_DIRS: list[Path] = [
-    Path("/etc/apparmor.d"),
-    Path("/usr/share/apparmor"),
-]
+_BASE_INCLUDE_SEARCH_DIRS: list[Path] = [Path("/etc/apparmor.d")]
+SNAP_HOSTFS = Path("/var/lib/snapd/hostfs")
+
+
+def _compute_include_search_dirs() -> list[Path]:
+    # Under snap confinement the host filesystem is bind-mounted at a
+    # well-known prefix; detect this via the SNAP environment variable.
+    if os.environ.get("SNAP"):
+        return [SNAP_HOSTFS / p.relative_to("/") for p in _BASE_INCLUDE_SEARCH_DIRS]
+    return list(_BASE_INCLUDE_SEARCH_DIRS)
+
+
+DEFAULT_INCLUDE_SEARCH_DIRS: list[Path] = _compute_include_search_dirs()
 
 # ── KeywordDef ────────────────────────────────────────────────────────────────
 

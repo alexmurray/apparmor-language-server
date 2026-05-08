@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 from apparmor_language_server.diagnostics import (
     _check_apparmor_parser,
     _find_apparmor_parser,
+    _snap_parser_extra_args,
     get_diagnostics,
 )
 from apparmor_language_server.parser import parse_document
@@ -577,3 +578,52 @@ class TestCheckApparmorParser:
         assert args[-1] == str(profile)
         assert "-Q" in args
         assert "-K" in args
+
+
+class TestSnapParserExtraArgs:
+    def test_no_snap_env_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("SNAP", raising=False)
+        assert _snap_parser_extra_args() == []
+
+    def test_snap_env_returns_base_and_config_args(self, monkeypatch):
+        monkeypatch.setenv("SNAP", "/snap/apparmor-language-server/current")
+        args = _snap_parser_extra_args()
+        assert "--base" in args
+        assert "--config-file" in args
+        base_idx = args.index("--base")
+        assert args[base_idx + 1] == "/var/lib/snapd/hostfs/etc/apparmor.d"
+        cfg_idx = args.index("--config-file")
+        assert args[cfg_idx + 1] == "/var/lib/snapd/hostfs/etc/apparmor/parser.conf"
+
+    def test_snap_args_passed_to_subprocess(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SNAP", "/snap/apparmor-language-server/current")
+        profile = tmp_path / "test.aa"
+        profile.write_text("profile x {\n  capability kill,\n}\n")
+        with (
+            patch("subprocess.run", return_value=_parser_result("", returncode=0)) as mock_run,
+            patch(
+                "apparmor_language_server.diagnostics._find_apparmor_parser",
+                return_value="/usr/sbin/apparmor_parser",
+            ),
+        ):
+            _check_apparmor_parser(profile, profile.as_uri(), None)
+        args = mock_run.call_args[0][0]
+        assert "--base" in args
+        assert "--config-file" in args
+        assert args[-1] == str(profile)
+
+    def test_no_snap_args_passed_to_subprocess_without_snap(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SNAP", raising=False)
+        profile = tmp_path / "test.aa"
+        profile.write_text("profile x {\n  capability kill,\n}\n")
+        with (
+            patch("subprocess.run", return_value=_parser_result("", returncode=0)) as mock_run,
+            patch(
+                "apparmor_language_server.diagnostics._find_apparmor_parser",
+                return_value="/usr/sbin/apparmor_parser",
+            ),
+        ):
+            _check_apparmor_parser(profile, profile.as_uri(), None)
+        args = mock_run.call_args[0][0]
+        assert "--base" not in args
+        assert "--config-file" not in args
