@@ -44,7 +44,7 @@ _RE_CAPABILITY_RULE = re.compile(
     RE_QUALIFIERS.pattern
     + r"capability\b\s+(?P<caps>[\w][\w,\s]*?)\s*(?P<comma>,?)\s*$"
 )
-_RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
+_RE_ITEMS_IN_PARENS = re.compile(r"\(([^)]+)\)")
 _RE_INCLUDE_HASH = re.compile(r"^#include\b")
 
 # Extra indent levels applied to continuation lines of a multi-line rule.
@@ -200,7 +200,7 @@ def _sort_paren_lists(line: str) -> str:
             parts = inner.split()
             return "(" + " ".join(sorted(parts)) + ")"
 
-    return _RE_CAPS_IN_PARENS.sub(sort_match, line)
+    return _RE_ITEMS_IN_PARENS.sub(sort_match, line)
 
 
 def _collapse_blanks(text: str, max_blanks: int) -> str:
