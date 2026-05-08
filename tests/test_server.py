@@ -1278,3 +1278,74 @@ class TestPublishDiagnosticsExternalCheck:
     def test_default_call_skips_external(self, server):
         """Default call (no run_external kwarg) must not run the external check."""
         assert self._captured_document_path(server, run_external=False) is None
+
+    def test_primary_uri_published_on_save_to_clear_stale_diagnostics(self, server):
+        """On a save pass, even when get_diagnostics returns no results the
+        primary URI must be published with an empty list so the editor clears
+        stale apparmor_parser diagnostics."""
+        from unittest.mock import patch
+
+        published = []
+        server.text_document_publish_diagnostics = lambda p: published.append(p)
+        with patch(
+            "apparmor_language_server.server.get_diagnostics", return_value={}
+        ):
+            server._publish_diagnostics(URI, "profile x { }\n", run_external=True)
+        uris_published = [p.uri for p in published]
+        assert URI in uris_published
+        primary = next(p for p in published if p.uri == URI)
+        assert primary.diagnostics == []
+
+    def test_primary_uri_published_on_change_to_clear_internal_diagnostics(self, server):
+        """On a mid-edit pass, the primary URI must always be published so that
+        internal diagnostics are cleared immediately when the user edits away
+        the offending text."""
+        from unittest.mock import patch
+
+        published = []
+        server.text_document_publish_diagnostics = lambda p: published.append(p)
+        with patch(
+            "apparmor_language_server.server.get_diagnostics", return_value={}
+        ):
+            server._publish_diagnostics(URI, "profile x { }\n", run_external=False)
+        uris_published = [p.uri for p in published]
+        assert URI in uris_published
+        primary = next(p for p in published if p.uri == URI)
+        assert primary.diagnostics == []
+
+    def test_parser_diags_reinjected_on_change(self, server):
+        """apparmor_parser diagnostics cached from the last save must be
+        re-injected into mid-edit publish passes so they remain visible while
+        the user has unsaved changes."""
+        from lsprotocol.types import Diagnostic, DiagnosticSeverity, Position, Range
+        from unittest.mock import patch
+
+        parser_diag = Diagnostic(
+            range=Range(start=Position(0, 0), end=Position(0, 10)),
+            message="test parser error",
+            source="apparmor_parser",
+            severity=DiagnosticSeverity.Error,
+        )
+        # Seed the cache as if a prior save had found a parser error.
+        server._parser_diags = {URI: [parser_diag]}
+
+        published = []
+        server.text_document_publish_diagnostics = lambda p: published.append(p)
+        with patch(
+            "apparmor_language_server.server.get_diagnostics", return_value={}
+        ):
+            server._publish_diagnostics(URI, "profile x { }\n", run_external=False)
+        primary = next(p for p in published if p.uri == URI)
+        assert parser_diag in primary.diagnostics
+
+    def test_parser_diags_cache_cleared_on_clean_save(self, server):
+        """After a save where apparmor_parser finds no errors, the cache must
+        be cleared so mid-edit passes no longer re-inject stale diagnostics."""
+        from unittest.mock import patch
+
+        server._parser_diags = {URI: []}  # pre-populate with something
+        with patch(
+            "apparmor_language_server.server.get_diagnostics", return_value={}
+        ):
+            server._publish_diagnostics(URI, "profile x { }\n", run_external=True)
+        assert server._parser_diags == {}

@@ -49,6 +49,7 @@ from lsprotocol.types import (
     WORKSPACE_DID_CHANGE_WORKSPACE_FOLDERS,
     WORKSPACE_SYMBOL,
     # Types
+    Diagnostic,
     CompletionList,
     CompletionOptions,
     CompletionParams,
@@ -170,6 +171,10 @@ class AppArmorLanguageServer(LanguageServer):
         # uri → (DocumentNode, [ParseError])
         self._doc_cache: dict[str, tuple[DocumentNode, list[ParseError]]] = {}
         self._cache_lock: threading.RLock = threading.RLock()
+        # Last known apparmor_parser diagnostics per URI, refreshed on every
+        # did_open / did_save pass and re-injected into did_change results so
+        # parser errors remain visible while the user is editing unsaved text.
+        self._parser_diags: dict[str, list[Diagnostic]] = {}
         # True while the background indexer is scanning workspace folders.
         # All result-returning handlers return empty while this is set.
         self._indexing: bool = False
@@ -283,6 +288,24 @@ class AppArmorLanguageServer(LanguageServer):
             document_path=document_path,
             apparmor_parser_path=self._get_apparmor_parser_path(),
         )
+        if run_external:
+            # Refresh the cache with whatever apparmor_parser reported this pass
+            # (identified by source). An empty result means no parser errors —
+            # the cache is cleared so mid-edit passes stop re-injecting them.
+            self._parser_diags = {
+                k: [d for d in v if d.source == "apparmor_parser"]
+                for k, v in diags.items()
+                if any(d.source == "apparmor_parser" for d in v)
+            }
+        else:
+            # Re-inject cached parser diagnostics so they remain visible while
+            # the user edits unsaved text.
+            for k, v in self._parser_diags.items():
+                diags.setdefault(k, []).extend(v)
+        # Always publish for the primary URI so that cleared internal
+        # diagnostics (e.g. user deleted the offending text) are removed from
+        # the editor immediately rather than waiting for the next save.
+        diags.setdefault(uri, [])
         for diag_uri, d in diags.items():
             self.text_document_publish_diagnostics(
                 PublishDiagnosticsParams(uri=diag_uri, diagnostics=d)
