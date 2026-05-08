@@ -95,6 +95,33 @@ class TestFormatting:
         edits = format_document(out, FormatterOptions())
         assert len(edits) == 0
 
+    def test_consecutive_includes_not_indented(self):
+        # include lines have no trailing comma but must not trigger continuation.
+        src = (
+            "profile x {\n"
+            "  include <abstractions/foo>\n"
+            "  include <abstractions/bar>\n"
+            "  capability kill,\n"
+            "}\n"
+        )
+        out = _format(src)
+        lines = out.splitlines()
+        include_lines = [l for l in lines if "include" in l]
+        assert all(l.startswith("  include") for l in include_lines)
+
+    def test_hash_include_consecutive_not_indented(self):
+        # #include lines normalised to include must not trigger continuation.
+        src = (
+            "profile x {\n"
+            "  #include <abstractions/foo>\n"
+            "  #include <abstractions/bar>\n"
+            "}\n"
+        )
+        out = _format(src)
+        lines = out.splitlines()
+        include_lines = [l for l in lines if "include" in l]
+        assert all(l.startswith("  include") for l in include_lines)
+
     def test_multiline_rule_followed_by_normal_rule(self):
         # After the trailing comma, the next rule returns to normal depth.
         src = (

@@ -41,6 +41,8 @@ _RE_CAPS_IN_PARENS = re.compile(r"\(([^)]+)\)")
 _RE_BLANK = re.compile(r"^\s*$")
 _RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*$")
 _RE_INCLUDE_HASH = re.compile(r"^(\s*)#include\b")
+# Lines that never trigger multi-line rule continuation (no trailing comma by design).
+_RE_NO_CONTINUATION = re.compile(r"^\s*(?:include\s|#include\s)")
 
 # Extra indent levels applied to continuation lines of a multi-line rule.
 _CONTINUATION_EXTRA = 2
@@ -149,7 +151,11 @@ def _format_text(text: str, opts: FormatterOptions) -> str:
         if opens > 0:
             # Opening a new block (profile/hat header) – not a continuation.
             in_continuation = False
-        elif not stripped.startswith("#") and not stripped.endswith(","):
+        elif (
+            not stripped.startswith("#")
+            and not stripped.endswith(",")
+            and not _RE_NO_CONTINUATION.match(stripped)
+        ):
             in_continuation = True
         else:
             in_continuation = False
