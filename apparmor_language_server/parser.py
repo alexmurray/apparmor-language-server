@@ -71,7 +71,8 @@ _PROFILE_OPEN_PAT = (
 RE_PROFILE_OPEN = re.compile(_PROFILE_OPEN_PAT)
 # Hat block: either `hat name {` or `^name {` (the caret form has no space).
 RE_HAT_OPEN = re.compile(
-    r"^\s*(?:hat\s+(?P<n>\S+)|\^(?P<n2>\S+))(?:\s+\((?P<hflags>[^)]*)\))?\s*\{"
+    r"^\s*(?:hat\s+(?P<n>\S+)|\^(?P<n2>\S+))"
+    r"(?:\s+(?:flags\s*=\s*)?\((?P<hflags>[^)]*)\))?\s*\{"
 )
 
 # Conditional rule blocks (`if EXPR { … }`, `else if EXPR { … }`, `else { … }`).
@@ -110,7 +111,7 @@ _RE_FILE_QUALIFIERS = re.compile(
     + r"|".join(QUALIFIERS + ["owner"])
     + r")\s+)*)?"
 )
-_RE_FILE_PATH = r'"[^"]*"|[@/{]\S+'
+_RE_FILE_PATH = r'"[^"]*"|[@/{]\S*'
 RE_FILE_PREFIX = re.compile(
     _RE_FILE_QUALIFIERS.pattern
     + (
@@ -1418,6 +1419,11 @@ class Parser:
                 if name == "profile":
                     name = attachment
                     attachment = ""
+                # Path-only form: '/path {' or '@{var}/path {' — the regex
+                # captures the path as 'n' (name), but it is the attachment.
+                elif name.startswith("/") or name.startswith("@"):
+                    attachment = name
+                    name = ""
                 flags_str = m.group("flags") or ""
                 flags = [f for f in re.split(r"[\s,]+", flags_str) if f]
                 xattrs = m.group("xattrs")

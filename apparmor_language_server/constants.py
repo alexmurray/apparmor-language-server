@@ -236,6 +236,7 @@ NETWORK_PERMISSIONS: list[str] = [
 
 NETWORK_DOMAINS: list[str] = [
     "unix",
+    "unspec",
     "inet",
     "ax25",
     "ipx",
@@ -509,6 +510,30 @@ MOUNT_OPTION_DEFS: dict[str, KeywordDef] = {
     ),
     "nosymfollow": KeywordDef(
         doc="**Mount option `nosymfollow`**\n\nDo not follow symbolic links during mount resolution."
+    ),
+    "make-shared": KeywordDef(
+        doc="**Mount option `make-shared`**\n\nChange a mount point to shared propagation."
+    ),
+    "make-rshared": KeywordDef(
+        doc="**Mount option `make-rshared`**\n\nRecursively change to shared propagation."
+    ),
+    "make-slave": KeywordDef(
+        doc="**Mount option `make-slave`**\n\nChange a mount point to slave propagation."
+    ),
+    "make-rslave": KeywordDef(
+        doc="**Mount option `make-rslave`**\n\nRecursively change to slave propagation."
+    ),
+    "make-private": KeywordDef(
+        doc="**Mount option `make-private`**\n\nChange a mount point to private propagation."
+    ),
+    "make-rprivate": KeywordDef(
+        doc="**Mount option `make-rprivate`**\n\nRecursively change to private propagation."
+    ),
+    "make-unbindable": KeywordDef(
+        doc="**Mount option `make-unbindable`**\n\nChange a mount point to unbindable."
+    ),
+    "make-runbindable": KeywordDef(
+        doc="**Mount option `make-runbindable`**\n\nRecursively change to unbindable."
     ),
 }
 

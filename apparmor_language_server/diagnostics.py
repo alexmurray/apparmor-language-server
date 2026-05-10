@@ -456,8 +456,11 @@ def _check_profile(node: Node, ctx: DiagContext) -> None:
             "conflicting-capability",
         )
 
-    # Recurse with profile-local variables added to scope
+    # Recurse with profile-local variables added to scope.
+    # @{exec_path} is implicitly defined by the profile attachment path.
     local_vars = set(ctx.defined_vars)
+    if node.attachment:
+        local_vars.add("@{exec_path}")
     for child in node.children:
         if isinstance(child, VariableDefNode):
             local_vars.add(child.name)
