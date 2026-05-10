@@ -201,6 +201,21 @@ class TestVariableDiagnostics:
         src = "profile x {\n  network @{UNDEFINED} stream,\n}\n"
         assert "undefined-variable" in _codes(src)
 
+    def test_implicit_profile_name_not_flagged(self):
+        """@{profile_name} is an implicit variable; must not be undefined."""
+        src = "profile myapp /usr/bin/myapp {\n  /proc/@{profile_name}/ r,\n}\n"
+        assert "undefined-variable" not in _codes(src)
+
+    def test_implicit_attach_path_not_flagged(self):
+        """@{attach_path} is synthesised from the profile attachment."""
+        src = "profile myapp /usr/bin/myapp {\n  @{attach_path} mr,\n}\n"
+        assert "undefined-variable" not in _codes(src)
+
+    def test_implicit_exec_path_not_flagged(self):
+        """@{exec_path} is a runtime implicit variable; must not be undefined."""
+        src = "profile myapp /usr/bin/myapp {\n  @{exec_path} mr,\n}\n"
+        assert "undefined-variable" not in _codes(src)
+
     def test_variable_in_trailing_comment_not_flagged(self):
         """A @{var} reference inside a trailing comment is documentation,
         not a real variable use."""

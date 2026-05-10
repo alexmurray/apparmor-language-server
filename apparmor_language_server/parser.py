@@ -1125,22 +1125,37 @@ class Parser:
                 doc.variables[node.name] = node
             elif isinstance(node, ProfileNode):
                 doc.profiles.append(node)
-                # Implicit @{exec_path} variable expanded from the profile
+                # Implicit @{attach_path} variable expanded from the profile
                 # attachment. With multiple profiles in one file we accumulate
                 # the alternatives (variables in AppArmor are value sets) so
                 # the last attachment doesn't clobber the first.
                 if node.attachment:
-                    exec_path_var = "@{exec_path}"
-                    existing = doc.variables.get(exec_path_var)
+                    attach_path_var = "@{attach_path}"
+                    existing = doc.variables.get(attach_path_var)
                     if existing is None:
-                        doc.variables[exec_path_var] = VariableDefNode(
+                        doc.variables[attach_path_var] = VariableDefNode(
                             range=node.range,
                             raw=node.attachment,
-                            name=exec_path_var,
+                            name=attach_path_var,
                             values=[node.attachment],
                         )
                     elif node.attachment not in existing.values:
                         existing.values.append(node.attachment)
+                # Implicit @{profile_name} variable. For path-only profiles the
+                # name lives in attachment; for named profiles it is node.name.
+                profile_name_value = node.name or node.attachment
+                if profile_name_value:
+                    pn_var = "@{profile_name}"
+                    existing_pn = doc.variables.get(pn_var)
+                    if existing_pn is None:
+                        doc.variables[pn_var] = VariableDefNode(
+                            range=node.range,
+                            raw=profile_name_value,
+                            name=pn_var,
+                            values=[profile_name_value],
+                        )
+                    elif profile_name_value not in existing_pn.values:
+                        existing_pn.values.append(profile_name_value)
                 self._collect_includes(node, doc)
 
         all_vars: dict[str, dict[str, VariableDefNode]] = {doc.uri: doc.variables}

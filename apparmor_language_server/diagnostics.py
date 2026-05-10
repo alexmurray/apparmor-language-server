@@ -313,8 +313,7 @@ def get_diagnostics(
         )
 
     # Collect defined variable names from all_variables in document.
-    # Seed with AppArmor built-in magic variables that are always available.
-    defined_vars: set[str] = {"@{profile_name}"}
+    defined_vars: set[str] = set()
     for _, vars in doc.all_variables.items():
         defined_vars.update(set(vars.keys()))
 
@@ -457,10 +456,13 @@ def _check_profile(node: Node, ctx: DiagContext) -> None:
         )
 
     # Recurse with profile-local variables added to scope.
-    # @{exec_path} is implicitly defined by the profile attachment path.
+    # AppArmor implicitly defines special variables per profile.
+    # @{exec_path} is a runtime value (the current executable) available in
+    # every profile; it cannot be determined statically so is added here.
+    # @{profile_name} and @{attach_path} are injected by the parser into
+    # doc.variables so they are already present in ctx.defined_vars.
     local_vars = set(ctx.defined_vars)
-    if node.attachment:
-        local_vars.add("@{exec_path}")
+    local_vars.add("@{exec_path}")
     for child in node.children:
         if isinstance(child, VariableDefNode):
             local_vars.add(child.name)

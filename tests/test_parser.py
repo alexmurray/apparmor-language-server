@@ -204,20 +204,50 @@ class TestVariables:
         ]
         assert len(aug_vars) >= 1
 
-    def test_exec_path_synthesised(self):
+    def test_profile_name_synthesised_named_profile(self):
         src = "profile myapp /usr/bin/myapp {\n  capability kill,\n}\n"
         doc, _ = parse_document("file:///test.aa", src)
-        assert "@{exec_path}" in doc.variables
-        assert "/usr/bin/myapp" in doc.variables["@{exec_path}"].values
+        assert "@{profile_name}" in doc.variables
+        assert "myapp" in doc.variables["@{profile_name}"].values
 
-    def test_exec_path_accumulates_across_profiles(self):
+    def test_profile_name_synthesised_path_only_profile(self):
+        """For path-only profiles the attachment acts as the profile name."""
+        src = "/usr/bin/myapp {\n  capability kill,\n}\n"
+        doc, _ = parse_document("file:///test.aa", src)
+        assert "@{profile_name}" in doc.variables
+        assert "/usr/bin/myapp" in doc.variables["@{profile_name}"].values
+
+    def test_profile_name_accumulates_across_profiles(self):
+        """Multiple profiles each contribute their name."""
+        src = (
+            "profile a /usr/bin/a {\n  capability kill,\n}\n"
+            "profile b /usr/bin/b {\n  capability kill,\n}\n"
+        )
+        doc, _ = parse_document("file:///test.aa", src)
+        values = doc.variables["@{profile_name}"].values
+        assert "a" in values
+        assert "b" in values
+
+    def test_profile_name_range_points_to_profile_header(self):
+        src = "\nprofile myapp /usr/bin/myapp {\n  capability kill,\n}\n"
+        doc, _ = parse_document("file:///test.aa", src)
+        var = doc.variables["@{profile_name}"]
+        assert var.range.start.line == 1
+
+    def test_attach_path_synthesised(self):
+        src = "profile myapp /usr/bin/myapp {\n  capability kill,\n}\n"
+        doc, _ = parse_document("file:///test.aa", src)
+        assert "@{attach_path}" in doc.variables
+        assert "/usr/bin/myapp" in doc.variables["@{attach_path}"].values
+
+    def test_attach_path_accumulates_across_profiles(self):
         """Multiple profiles in one file should each contribute their attachment."""
         src = (
             "profile a /usr/bin/a {\n  capability kill,\n}\n"
             "profile b /usr/bin/b {\n  capability kill,\n}\n"
         )
         doc, _ = parse_document("file:///test.aa", src)
-        values = doc.variables["@{exec_path}"].values
+        values = doc.variables["@{attach_path}"].values
         assert "/usr/bin/a" in values
         assert "/usr/bin/b" in values
 
