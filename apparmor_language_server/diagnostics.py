@@ -312,8 +312,9 @@ def get_diagnostics(
             )
         )
 
-    # Collect defined variable names from all_variables in document
-    defined_vars: set[str] = set()
+    # Collect defined variable names from all_variables in document.
+    # Seed with AppArmor built-in magic variables that are always available.
+    defined_vars: set[str] = {"@{profile_name}"}
     for _, vars in doc.all_variables.items():
         defined_vars.update(set(vars.keys()))
 

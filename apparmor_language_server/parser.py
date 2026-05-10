@@ -70,7 +70,9 @@ _PROFILE_OPEN_PAT = (
 )
 RE_PROFILE_OPEN = re.compile(_PROFILE_OPEN_PAT)
 # Hat block: either `hat name {` or `^name {` (the caret form has no space).
-RE_HAT_OPEN = re.compile(r"^\s*(?:hat\s+(?P<n>\S+)|\^(?P<n2>\S+))\s*\{")
+RE_HAT_OPEN = re.compile(
+    r"^\s*(?:hat\s+(?P<n>\S+)|\^(?P<n2>\S+))(?:\s+\((?P<hflags>[^)]*)\))?\s*\{"
+)
 
 # Conditional rule blocks (`if EXPR { … }`, `else if EXPR { … }`, `else { … }`).
 RE_IF_OPEN = re.compile(r"^\s*if\b\s*(?P<cond>.*?)\s*\{\s*$")
@@ -204,14 +206,35 @@ def _split_variable_values(rhs: str) -> list[str]:
     return out
 
 
+def _find_body_brace_open(line: str) -> int:
+    """Return the index of the profile-body opening '{' in a single-line profile.
+
+    Assumes *line* ends with '}' (the profile body closer). Scans backwards
+    counting braces so that '{' inside glob alternations or variable references
+    (e.g. /{usr,}/bin or @{HOME}) are not mistaken for the body opener.
+    Returns -1 if no matching '{' is found.
+    """
+    depth = 0
+    for i in range(len(line) - 1, -1, -1):
+        if line[i] == "}":
+            depth += 1
+        elif line[i] == "{":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
 def _rule_ends_line(line: str) -> bool:
     """Return True if *line* terminates an AppArmor rule.
 
     A rule ends when its rightmost comma sits outside all parentheses and
     quoted strings (paren depth 0).  Lines that end with something other than
     a comma never terminate a rule and must be joined with the next line.
+    Inline comments are stripped before checking so that a trailing comment
+    containing parentheses (e.g. ``r,  # foo(1)``) is not misinterpreted.
     """
-    stripped = line.rstrip()
+    stripped = line[: _code_end(line)].rstrip()
     if not stripped.endswith(","):
         return False
     depth = 0
@@ -252,7 +275,7 @@ def _parse_signal_rest(
 
     m = _RE_SIGNAL_PAREN_PERMS.match(rest)
     if m:
-        permissions = m.group(1).split()
+        permissions = [p.strip(",") for p in m.group(1).split() if p.strip(",")]
         rest = rest[m.end() :]
     else:
         m = _RE_SIGNAL_BARE_PERM.match(rest)
@@ -263,7 +286,7 @@ def _parse_signal_rest(
     sm = _RE_SIGNAL_SET.search(rest)
     if sm:
         raw_set = sm.group(1) or sm.group(2) or sm.group(3) or ""
-        signal_set = [s.strip('"') for s in raw_set.split() if s.strip('"')]
+        signal_set = [s.strip('",') for s in raw_set.split() if s.strip('",')]
 
     pm = _RE_SIGNAL_PEER.search(rest)
     if pm:
@@ -751,6 +774,9 @@ def _build_dbus(content: str, **base: Any) -> DbusRuleNode:
                 perms.append(cleaned)
             else:
                 break
+    # Strip peer=(...) before extracting top-level name= so that
+    # "name=foo" inside a peer clause is not mistaken for a service name.
+    content_no_peer = re.sub(r"\bpeer=\([^)]*\)", "", content)
     return DbusRuleNode(
         content=content,
         permissions=perms,
@@ -759,7 +785,7 @@ def _build_dbus(content: str, **base: Any) -> DbusRuleNode:
         interface=_extract_kv(content, "interface"),
         member=_extract_kv(content, "member"),
         peer=_extract_kv(content, "peer"),
-        name=_extract_kv(content, "name"),
+        name=_extract_kv(content_no_peer, "name"),
         **base,
     )
 
@@ -1375,7 +1401,8 @@ class Parser:
             m = RE_HAT_OPEN.match(raw_start)
             name = ((m.group("n") or m.group("n2")) if m else "") or ""
             attachment = None
-            flags: list[str] = []
+            flags_str = (m.group("hflags") or "") if m else ""
+            flags: list[str] = [f for f in re.split(r"[\s,]+", flags_str) if f]
         else:
             m = RE_PROFILE_OPEN.match(raw_start)
             if m:
@@ -1392,7 +1419,7 @@ class Parser:
                     name = attachment
                     attachment = ""
                 flags_str = m.group("flags") or ""
-                flags = [f.strip() for f in flags_str.split(",") if f.strip()]
+                flags = [f for f in re.split(r"[\s,]+", flags_str) if f]
                 xattrs = m.group("xattrs")
                 if xattrs is not None:
                     xattrs = xattrs.strip() or None
@@ -1402,10 +1429,13 @@ class Parser:
                 flags = []
 
         # --- Single-line profile? e.g.  profile x { cap kill, } ---
-        brace_open = raw_start.find("{")
-        brace_close = raw_start.rfind("}")
-        if brace_open != -1 and brace_close > brace_open:
-            inner_text = raw_start[brace_open + 1 : brace_close].strip()
+        # Use brace-matching from the end rather than find/rfind so that '{'
+        # inside glob alternations (/{usr,}/bin) or variable references
+        # (@{HOME}) in the attachment path are not mistaken for the body opener.
+        _stripped = raw_start.rstrip()
+        brace_open = _find_body_brace_open(_stripped) if _stripped.endswith("}") else -1
+        if brace_open != -1:
+            inner_text = _stripped[brace_open + 1 : -1].strip()
             children = self._parse_inline_rules(inner_text, start_line)
             self._advance()
             logger.debug("ProfileNode: %s (line %d)", name or "(anonymous)", start_line)
