@@ -42,20 +42,32 @@ from lsprotocol.types import (
 
 from .constants import (
     CAPABILITIES,
+    DBUS_PERMISSIONS,
     EXECUTE_PERMISSIONS,
+    IO_URING_PERMISSIONS,
     KEYWORD_DEFS,
+    MOUNT_OPTIONS,
+    MQUEUE_PERMISSIONS,
+    MQUEUE_TYPES,
     NETWORK_DOMAINS,
     NETWORK_PERMISSIONS,
     NETWORK_PROTOCOLS,
     NETWORK_TYPES,
     PROFILE_FLAGS,
+    PROFILE_MODES,
     PTRACE_PERMISSIONS,
+    RE_ERRNO_NAME,
+    RLIMIT_TYPES,
     SIGNAL_NAMES,
     SIGNAL_PERMISSIONS,
     SNAP_HOSTFS,
+    UNIX_PERMISSIONS,
+    UNIX_TYPES,
+    USERNS_PERMISSIONS,
 )
 from .parser import (
     ABINode,
+    AliasNode,
     AllRuleNode,
     CapabilityNode,
     ChangeHatRuleNode,
@@ -64,6 +76,7 @@ from .parser import (
     DbusRuleNode,
     DocumentNode,
     FileRuleNode,
+    IfBlockNode,
     IncludeNode,
     IoUringRuleNode,
     LinkRuleNode,
@@ -75,6 +88,7 @@ from .parser import (
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
+    QualifierBlockNode,
     RemountRuleNode,
     RuleNode,
     RlimitRuleNode,
@@ -353,9 +367,11 @@ def _check_node(node: Node, ctx: DiagContext) -> None:
 def _check_profile(node: Node, ctx: DiagContext) -> None:
     assert isinstance(node, ProfileNode)
     diags, uri = ctx.diags, ctx.uri
-    # Invalid flags
+    # Invalid flags + per-flag value validation
+    modes_set: list[str] = []
     for flag in node.flags:
-        flag_name = flag.split("=")[0].strip()
+        name, _, value = flag.partition("=")
+        flag_name = name.strip()
         if flag_name and flag_name not in PROFILE_FLAGS:
             _add(
                 diags,
@@ -365,6 +381,33 @@ def _check_profile(node: Node, ctx: DiagContext) -> None:
                 DiagnosticSeverity.Error,
                 "unknown-flag",
             )
+            continue
+        if flag_name in PROFILE_MODES:
+            modes_set.append(flag_name)
+        if flag_name == "error":
+            errno = value.strip().upper()
+            if errno and not RE_ERRNO_NAME.match(errno):
+                _add(
+                    diags,
+                    uri,
+                    node,
+                    f"Profile flag 'error={value}': value must be an errno "
+                    "name beginning with 'E' (see errno(3)).",
+                    DiagnosticSeverity.Warning,
+                    "invalid-error-flag-value",
+                )
+
+    # Mode flags are mutually exclusive
+    if len(modes_set) > 1:
+        _add(
+            diags,
+            uri,
+            node,
+            "Profile mode flags are mutually exclusive: "
+            f"{', '.join(modes_set)}. Pick one.",
+            DiagnosticSeverity.Error,
+            "conflicting-profile-modes",
+        )
 
     # Empty body warning
     non_comment_children = [c for c in node.children if not isinstance(c, CommentNode)]
@@ -418,6 +461,24 @@ def _check_profile(node: Node, ctx: DiagContext) -> None:
         if isinstance(child, VariableDefNode):
             local_vars.add(child.name)
         _check_node(child, replace(ctx, defined_vars=local_vars))
+
+
+# ── Generic qualifier conflict ────────────────────────────────────────────────
+
+
+def _check_qualifier_conflict(node: Node, ctx: DiagContext) -> None:
+    """Flag rules that use both ``allow`` and ``deny`` qualifiers."""
+    if not isinstance(node, RuleNode):
+        return
+    if "allow" in node.qualifiers and "deny" in node.qualifiers:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            "Qualifiers 'allow' and 'deny' are mutually exclusive on the same rule.",
+            DiagnosticSeverity.Error,
+            "allow-deny-conflict",
+        )
 
 
 # ── Capability checks ─────────────────────────────────────────────────────────
@@ -713,37 +774,501 @@ def _check_unknown_rule(node: Node, ctx: DiagContext) -> None:
     _check_var_refs(node, ctx)
 
 
+# ── Network: additional semantic checks ──────────────────────────────────────
+
+
+def _check_network_semantics(node: Node, ctx: DiagContext) -> None:
+    """Cross-cutting checks not covered by the simple token validation.
+
+    * ``netlink`` family rules may only specify type ``dgram`` or ``raw``
+      (man apparmor.d §"Network Rules").
+    """
+    assert isinstance(node, NetworkNode)
+    if node.domain == "netlink" and node.type and node.type not in {"dgram", "raw"}:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"Network rule: netlink may only specify type 'dgram' or 'raw' "
+            f"(got '{node.type}').",
+            DiagnosticSeverity.Error,
+            "netlink-type-restricted",
+        )
+
+
+# ── Mount checks ─────────────────────────────────────────────────────────────
+
+_MOUNT_OPTIONS_SET = frozenset(MOUNT_OPTIONS)
+
+
+def _check_mount_options(node: Node, ctx: DiagContext) -> None:
+    """Validate ``options=…`` tokens against the documented mount-flag list.
+
+    Tokens that look like AARE patterns (contain glob metacharacters) are
+    skipped — the man page allows pattern matching against options.
+    """
+    assert isinstance(node, (MountRuleNode, RemountRuleNode, UmountRuleNode))
+    for opt in node.options:
+        cleaned = opt.lower().rstrip(",")
+        if not cleaned:
+            continue
+        if any(ch in cleaned for ch in "*?[]{}@"):
+            continue
+        if cleaned not in _MOUNT_OPTIONS_SET:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"Unknown mount option '{opt}'.",
+                DiagnosticSeverity.Warning,
+                "unknown-mount-option",
+            )
+
+
+# ── Rlimit checks ────────────────────────────────────────────────────────────
+
+_RLIMIT_TYPES_SET = frozenset(RLIMIT_TYPES)
+_RLIMIT_SIZE_RES = frozenset(
+    {"fsize", "data", "stack", "core", "rss", "as", "memlock", "msgqueue"}
+)
+_RLIMIT_NUMBER_RES = frozenset(
+    {"ofile", "nofile", "locks", "sigpending", "nproc", "rtprio"}
+)
+_RLIMIT_TIME_RES = frozenset({"cpu", "rttime"})
+_RLIMIT_NICE_RES = frozenset({"nice"})
+
+_RE_RLIMIT_SIZE = re.compile(r"^\d+(?:[KMG])?$", re.IGNORECASE)
+_RE_RLIMIT_NUMBER = re.compile(r"^\d+$")
+_RE_RLIMIT_TIME = re.compile(
+    r"^\d+\s*(?:us|microsecond|microseconds|ms|millisecond|milliseconds|"
+    r"s|sec|second|seconds|min|minute|minutes|h|hour|hours|d|day|days|"
+    r"week|weeks)?$",
+    re.IGNORECASE,
+)
+_RE_RLIMIT_CPU_UNIT = re.compile(
+    r"^\d+\s*(?:s|sec|second|seconds|min|minute|minutes|h|hour|hours|"
+    r"d|day|days|week|weeks)?$",
+    re.IGNORECASE,
+)
+
+
+def _check_rlimit(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, RlimitRuleNode)
+    res = node.resource.strip().lower()
+    val = node.value.strip()
+    if res and res not in _RLIMIT_TYPES_SET:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"Unknown rlimit resource '{node.resource}'.",
+            DiagnosticSeverity.Error,
+            "unknown-rlimit-resource",
+        )
+        return
+    if not val:
+        return
+    if val.lower() == "infinity":
+        return
+    ok = True
+    msg = ""
+    if res in _RLIMIT_SIZE_RES:
+        ok = bool(_RE_RLIMIT_SIZE.match(val))
+        msg = "expected NUMBER[K|M|G]"
+    elif res in _RLIMIT_NUMBER_RES:
+        ok = bool(_RE_RLIMIT_NUMBER.match(val))
+        msg = "expected a non-negative integer"
+    elif res == "cpu":
+        ok = bool(_RE_RLIMIT_CPU_UNIT.match(val))
+        msg = "rlimit 'cpu' only allows units of seconds or larger"
+    elif res in _RLIMIT_TIME_RES:
+        ok = bool(_RE_RLIMIT_TIME.match(val))
+        msg = "expected NUMBER followed by a time unit (us, ms, s, min, h, d, week)"
+    elif res in _RLIMIT_NICE_RES:
+        try:
+            n = int(val)
+            ok = -20 <= n <= 19
+        except ValueError:
+            ok = False
+        msg = "rlimit 'nice' must be an integer in the range -20..19"
+    if not ok:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"Invalid rlimit value '{val}' for '{res}': {msg}.",
+            DiagnosticSeverity.Warning,
+            "invalid-rlimit-value",
+        )
+
+
+# ── DBus checks ──────────────────────────────────────────────────────────────
+
+_DBUS_PERM_SET = frozenset(DBUS_PERMISSIONS)
+_DBUS_MESSAGE_PERMS = frozenset({"send", "receive", "r", "w", "rw", "read", "write"})
+_DBUS_SERVICE_PERMS = frozenset({"bind", "r", "w", "rw", "read", "write"})
+
+
+def _check_dbus(node: Node, ctx: DiagContext) -> None:
+    """Validate dbus permissions and rule-shape incompatibilities."""
+    assert isinstance(node, DbusRuleNode)
+    diags, uri = ctx.diags, ctx.uri
+    perms = [p.lower() for p in node.permissions]
+    for perm in perms:
+        if perm and perm not in _DBUS_PERM_SET:
+            _add(
+                diags,
+                uri,
+                node,
+                f"Unknown D-Bus permission '{perm}'. Expected one of: "
+                f"{', '.join(DBUS_PERMISSIONS)}.",
+                DiagnosticSeverity.Warning,
+                "unknown-dbus-permission",
+            )
+
+    # Rule-shape incompatibilities (man apparmor.d §"DBus rules").
+    has_message_fields = any(
+        v is not None for v in (node.path, node.interface, node.member, node.peer)
+    )
+    has_service_fields = node.name is not None
+    if "bind" in perms and has_message_fields:
+        _add(
+            diags,
+            uri,
+            node,
+            "D-Bus permission 'bind' cannot be used in a message rule "
+            "(rules with path=/interface=/member=/peer=).",
+            DiagnosticSeverity.Error,
+            "dbus-bind-in-message-rule",
+        )
+    if has_service_fields and (
+        {"send", "receive", "r", "w", "rw", "read", "write"} & set(perms)
+    ):
+        _add(
+            diags,
+            uri,
+            node,
+            "D-Bus permissions 'send' and 'receive' cannot be used in a "
+            "service rule (rules with name=).",
+            DiagnosticSeverity.Error,
+            "dbus-send-recv-in-service-rule",
+        )
+    if "eavesdrop" in perms and (has_message_fields or has_service_fields):
+        _add(
+            diags,
+            uri,
+            node,
+            "D-Bus permission 'eavesdrop' is incompatible with conditionals "
+            "other than 'bus='.",
+            DiagnosticSeverity.Error,
+            "dbus-eavesdrop-with-conds",
+        )
+
+
+# ── Unix checks ──────────────────────────────────────────────────────────────
+
+_UNIX_PERM_SET = frozenset(UNIX_PERMISSIONS)
+_UNIX_TYPE_SET = frozenset(UNIX_TYPES)
+
+
+def _check_unix(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, UnixRuleNode)
+    for perm in node.permissions:
+        p = perm.strip().lower()
+        if p and p not in _UNIX_PERM_SET:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"Unknown unix socket permission '{perm}'.",
+                DiagnosticSeverity.Warning,
+                "unknown-unix-permission",
+            )
+    if node.type and node.type.lower() not in _UNIX_TYPE_SET:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"Unknown unix socket type '{node.type}'. Expected one of: "
+            f"{', '.join(UNIX_TYPES)}.",
+            DiagnosticSeverity.Warning,
+            "unknown-unix-type",
+        )
+
+
+# ── Mqueue checks ────────────────────────────────────────────────────────────
+
+_MQUEUE_PERM_SET = frozenset(MQUEUE_PERMISSIONS)
+_MQUEUE_TYPE_SET = frozenset(MQUEUE_TYPES)
+
+
+def _check_mqueue(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, MqueueRuleNode)
+    for perm in node.permissions:
+        p = perm.strip().lower()
+        if p and p not in _MQUEUE_PERM_SET:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"Unknown mqueue permission '{perm}'.",
+                DiagnosticSeverity.Warning,
+                "unknown-mqueue-permission",
+            )
+    type_ = node.type.lower() if node.type else None
+    if type_ and type_ not in _MQUEUE_TYPE_SET:
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"Unknown mqueue type '{node.type}'. Expected 'posix' or 'sysv'.",
+            DiagnosticSeverity.Warning,
+            "unknown-mqueue-type",
+        )
+
+    # Name shape must agree with the type (man apparmor.d §"Message Queue rules").
+    name = (node.name or "").strip()
+    if name:
+        looks_posix = name.startswith("/")
+        looks_sysv = name.isdigit()
+        if type_ == "posix" and not looks_posix:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"POSIX mqueue name '{name}' must start with '/'.",
+                DiagnosticSeverity.Error,
+                "mqueue-posix-name-shape",
+            )
+        elif type_ == "sysv" and not looks_sysv:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"SysV mqueue name '{name}' must be a positive integer.",
+                DiagnosticSeverity.Error,
+                "mqueue-sysv-name-shape",
+            )
+
+
+# ── io_uring checks ──────────────────────────────────────────────────────────
+
+_IO_URING_PERM_SET = frozenset(IO_URING_PERMISSIONS)
+
+
+def _check_io_uring(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, IoUringRuleNode)
+    for perm in node.permissions:
+        p = perm.strip().lower()
+        if p and p not in _IO_URING_PERM_SET:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"Unknown io_uring permission '{perm}'. Expected one of: "
+                f"{', '.join(IO_URING_PERMISSIONS)}.",
+                DiagnosticSeverity.Warning,
+                "unknown-io-uring-permission",
+            )
+
+
+# ── Userns checks ────────────────────────────────────────────────────────────
+
+_USERNS_PERM_SET = frozenset(USERNS_PERMISSIONS)
+_RE_USERNS_PERMS = re.compile(r"^\s*(?:\(([^)]*)\)|(\S+))?\s*$")
+
+
+def _check_userns(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, UsernsRuleNode)
+    content = node.content.strip().rstrip(",")
+    if not content:
+        return
+    m = _RE_USERNS_PERMS.match(content)
+    if not m:
+        return
+    raw = (m.group(1) or m.group(2) or "").replace(",", " ")
+    for perm in raw.split():
+        if perm.lower() not in _USERNS_PERM_SET:
+            _add(
+                ctx.diags,
+                ctx.uri,
+                node,
+                f"Unknown userns permission '{perm}'. Only 'create' is supported.",
+                DiagnosticSeverity.Warning,
+                "unknown-userns-permission",
+            )
+
+
+# ── Pivot root checks ────────────────────────────────────────────────────────
+
+
+def _check_pivot_root(node: Node, ctx: DiagContext) -> None:
+    """Both ``oldroot`` and the new root path must end with ``/`` since they
+    are directories (man apparmor.d §"Pivot Root Rules")."""
+    assert isinstance(node, PivotRootRuleNode)
+    for label, val in (("oldroot", node.oldroot), ("new root", node.newroot)):
+        if val is None:
+            continue
+        if val.endswith("/"):
+            continue
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"pivot_root {label} '{val}' must end with '/' "
+            "(paths refer to directories).",
+            DiagnosticSeverity.Warning,
+            "pivot-root-trailing-slash",
+        )
+
+
+# ── Block recursion ──────────────────────────────────────────────────────────
+
+_BOOL_VAR_REF = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def _check_if_block(node: Node, ctx: DiagContext) -> None:
+    """Validate variable references in the condition and recurse into the body.
+
+    Both ``@{var}`` and ``${bool_var}`` references are checked against
+    ``ctx.defined_vars`` so unknown identifiers in a conditional surface as
+    diagnostics. The trailing ``else``/``else if`` branches are walked via
+    the ``else_branch`` chain.
+    """
+    assert isinstance(node, IfBlockNode)
+    branch: Optional[IfBlockNode] = node
+    while branch is not None:
+        if branch.condition:
+            seen: set[str] = set()
+            for ref in _VAR_REF.findall(branch.condition):
+                if ref in seen or ref in ctx.defined_vars:
+                    continue
+                seen.add(ref)
+                _add(
+                    ctx.diags,
+                    ctx.uri,
+                    branch,
+                    f"Variable '{ref}' is used but never defined.",
+                    DiagnosticSeverity.Warning,
+                    "undefined-variable",
+                )
+            for ref in _BOOL_VAR_REF.findall(branch.condition):
+                if ref in seen or ref in ctx.defined_vars:
+                    continue
+                seen.add(ref)
+                _add(
+                    ctx.diags,
+                    ctx.uri,
+                    branch,
+                    f"Boolean variable '{ref}' is used but never defined.",
+                    DiagnosticSeverity.Warning,
+                    "undefined-bool-variable",
+                )
+        for child in branch.children:
+            _check_node(child, ctx)
+        branch = branch.else_branch
+
+
+def _check_qualifier_block(node: Node, ctx: DiagContext) -> None:
+    """Recurse into a qualifier block's body so its rules get the usual checks."""
+    assert isinstance(node, QualifierBlockNode)
+    for child in node.children:
+        _check_node(child, ctx)
+
+
+# ── Alias checks ─────────────────────────────────────────────────────────────
+
+
+def _check_alias(node: Node, ctx: DiagContext) -> None:
+    assert isinstance(node, AliasNode)
+    for label, val in (("source", node.original), ("target", node.replacement)):
+        if not val:
+            continue
+        if val.startswith("/") or val.startswith("@") or val.startswith('"/'):
+            continue
+        _add(
+            ctx.diags,
+            ctx.uri,
+            node,
+            f"alias {label} path '{val}' must be absolute (start with '/').",
+            DiagnosticSeverity.Warning,
+            "alias-relative-path",
+        )
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 # Map each AST node type to the ordered list of checks to run against it.
 # Adding a new check is a one-line edit here plus its implementation above;
 # the previous long isinstance chain in _check_node is now driven by data.
 
 _VAR_REF_RULE_TYPES: tuple[type[Node], ...] = (
-    DbusRuleNode,
-    UnixRuleNode,
-    MountRuleNode,
-    UmountRuleNode,
-    UsernsRuleNode,
-    IoUringRuleNode,
-    MqueueRuleNode,
-    RlimitRuleNode,
-    PivotRootRuleNode,
-    ChangeProfileRuleNode,
     ChangeHatRuleNode,
+    ChangeProfileRuleNode,
     LinkRuleNode,
     AllRuleNode,
-    RemountRuleNode,
 )
 
 _CHECKS: dict[type[Node], tuple[_DiagCheck, ...]] = {
     ProfileNode: (_check_profile,),
-    CapabilityNode: (_check_capability, _check_var_refs),
-    NetworkNode: (_check_network, _check_var_refs),
-    SignalRuleNode: (_check_signal, _check_var_refs),
-    PtraceRuleNode: (_check_ptrace, _check_var_refs),
-    FileRuleNode: (_check_file_rule, _check_var_refs),
+    CapabilityNode: (
+        _check_capability,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    NetworkNode: (
+        _check_network,
+        _check_network_semantics,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    SignalRuleNode: (
+        _check_signal,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    PtraceRuleNode: (_check_ptrace, _check_qualifier_conflict, _check_var_refs),
+    FileRuleNode: (
+        _check_file_rule,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    DbusRuleNode: (_check_dbus, _check_qualifier_conflict, _check_var_refs),
+    UnixRuleNode: (_check_unix, _check_qualifier_conflict, _check_var_refs),
+    MountRuleNode: (
+        _check_mount_options,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    UmountRuleNode: (
+        _check_mount_options,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    RemountRuleNode: (
+        _check_mount_options,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    MqueueRuleNode: (_check_mqueue, _check_qualifier_conflict, _check_var_refs),
+    IoUringRuleNode: (
+        _check_io_uring,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    UsernsRuleNode: (_check_userns, _check_qualifier_conflict, _check_var_refs),
+    RlimitRuleNode: (_check_rlimit, _check_qualifier_conflict, _check_var_refs),
+    PivotRootRuleNode: (
+        _check_pivot_root,
+        _check_qualifier_conflict,
+        _check_var_refs,
+    ),
+    AliasNode: (_check_alias,),
     ABINode: (_check_abi,),
     IncludeNode: (_check_include,),
+    IfBlockNode: (_check_if_block,),
+    QualifierBlockNode: (_check_qualifier_block,),
     UnknownRuleNode: (_check_unknown_rule,),
-    **{cls: (_check_var_refs,) for cls in _VAR_REF_RULE_TYPES},
+    **{
+        cls: (_check_qualifier_conflict, _check_var_refs) for cls in _VAR_REF_RULE_TYPES
+    },
 }

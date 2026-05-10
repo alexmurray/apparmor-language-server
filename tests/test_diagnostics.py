@@ -721,3 +721,186 @@ class TestSnapParserExtraArgs:
         args = mock_run.call_args[0][0]
         assert "--base" not in args
         assert "--config-file" not in args
+
+
+class TestMountOptionDiagnostics:
+    def test_unknown_mount_option_warns(self):
+        codes = _codes("profile x {\n  mount options=(notarealopt) /a -> /b,\n}\n")
+        assert "unknown-mount-option" in codes
+
+    def test_known_mount_options_pass(self):
+        codes = _codes("profile x {\n  mount options=(ro,nodev) /a -> /b,\n}\n")
+        assert "unknown-mount-option" not in codes
+
+    def test_mount_options_pattern_skipped(self):
+        codes = _codes("profile x {\n  mount options=(**) /a -> /b,\n}\n")
+        assert "unknown-mount-option" not in codes
+
+
+class TestRlimitDiagnostics:
+    def test_unknown_resource(self):
+        codes = _codes("profile x {\n  set rlimit notreal <= 5,\n}\n")
+        assert "unknown-rlimit-resource" in codes
+
+    def test_size_unit_required(self):
+        codes = _codes("profile x {\n  set rlimit data <= 5h,\n}\n")
+        assert "invalid-rlimit-value" in codes
+
+    def test_cpu_seconds_or_larger(self):
+        codes = _codes("profile x {\n  set rlimit cpu <= 5ms,\n}\n")
+        assert "invalid-rlimit-value" in codes
+
+    def test_nice_range(self):
+        codes = _codes("profile x {\n  set rlimit nice <= 100,\n}\n")
+        assert "invalid-rlimit-value" in codes
+        codes = _codes("profile x {\n  set rlimit nice <= 5,\n}\n")
+        assert "invalid-rlimit-value" not in codes
+
+
+class TestDbusDiagnostics:
+    def test_unknown_permission_warns(self):
+        codes = _codes("profile x {\n  dbus (notreal),\n}\n")
+        assert "unknown-dbus-permission" in codes
+
+    def test_bind_in_message_rule_errors(self):
+        codes = _codes("profile x {\n  dbus (bind) path=/foo interface=org.foo,\n}\n")
+        assert "dbus-bind-in-message-rule" in codes
+
+    def test_send_in_service_rule_errors(self):
+        codes = _codes("profile x {\n  dbus (send) name=org.example,\n}\n")
+        assert "dbus-send-recv-in-service-rule" in codes
+
+    def test_eavesdrop_with_path_errors(self):
+        codes = _codes("profile x {\n  dbus eavesdrop path=/foo,\n}\n")
+        assert "dbus-eavesdrop-with-conds" in codes
+
+
+class TestUnixDiagnostics:
+    def test_unknown_permission(self):
+        codes = _codes("profile x {\n  unix (notarealperm),\n}\n")
+        assert "unknown-unix-permission" in codes
+
+    def test_unknown_type(self):
+        codes = _codes("profile x {\n  unix type=notreal addr=@foo,\n}\n")
+        assert "unknown-unix-type" in codes
+
+
+class TestMqueueDiagnostics:
+    def test_unknown_permission(self):
+        codes = _codes("profile x {\n  mqueue (notreal),\n}\n")
+        assert "unknown-mqueue-permission" in codes
+
+    def test_posix_name_must_start_with_slash(self):
+        codes = _codes("profile x {\n  mqueue type=posix bare,\n}\n")
+        assert "mqueue-posix-name-shape" in codes
+
+    def test_sysv_name_must_be_integer(self):
+        codes = _codes("profile x {\n  mqueue type=sysv abc,\n}\n")
+        assert "mqueue-sysv-name-shape" in codes
+
+    def test_unknown_type(self):
+        codes = _codes("profile x {\n  mqueue type=fancy /name,\n}\n")
+        assert "unknown-mqueue-type" in codes
+
+
+class TestIoUringDiagnostics:
+    def test_unknown_permission(self):
+        codes = _codes("profile x {\n  io_uring (notarealperm),\n}\n")
+        assert "unknown-io-uring-permission" in codes
+
+    def test_known_permissions_pass(self):
+        codes = _codes("profile x {\n  io_uring (sqpoll override_creds),\n}\n")
+        assert "unknown-io-uring-permission" not in codes
+
+
+class TestUsernsDiagnostics:
+    def test_unknown_permission(self):
+        codes = _codes("profile x {\n  userns destroy,\n}\n")
+        assert "unknown-userns-permission" in codes
+
+    def test_create_permission_passes(self):
+        codes = _codes("profile x {\n  userns create,\n}\n")
+        assert "unknown-userns-permission" not in codes
+
+
+class TestPivotRootDiagnostics:
+    def test_missing_trailing_slash_warns(self):
+        codes = _codes("profile x {\n  pivot_root /mnt/root,\n}\n")
+        assert "pivot-root-trailing-slash" in codes
+
+    def test_with_trailing_slash_ok(self):
+        codes = _codes("profile x {\n  pivot_root /mnt/root/,\n}\n")
+        assert "pivot-root-trailing-slash" not in codes
+
+
+class TestNetworkSemantics:
+    def test_netlink_only_dgram_or_raw(self):
+        codes = _codes("profile x {\n  network netlink stream,\n}\n")
+        assert "netlink-type-restricted" in codes
+
+    def test_netlink_dgram_ok(self):
+        codes = _codes("profile x {\n  network netlink dgram,\n}\n")
+        assert "netlink-type-restricted" not in codes
+
+
+class TestQualifierConflict:
+    def test_allow_and_deny_conflict(self):
+        codes = _codes("profile x {\n  allow deny /foo r,\n}\n")
+        assert "allow-deny-conflict" in codes
+
+
+class TestProfileFlagsDiagnostics:
+    def test_conflicting_modes(self):
+        codes = _codes("profile x flags=(complain,kill) {\n  /foo r,\n}\n")
+        assert "conflicting-profile-modes" in codes
+
+    def test_invalid_error_flag_value(self):
+        codes = _codes("profile x flags=(error=NOTREAL) {\n  /foo r,\n}\n")
+        assert "invalid-error-flag-value" in codes
+
+    def test_valid_error_flag_value_ok(self):
+        codes = _codes("profile x flags=(error=EPERM) {\n  /foo r,\n}\n")
+        assert "invalid-error-flag-value" not in codes
+
+
+class TestAliasDiagnostics:
+    def test_relative_source_warns(self):
+        codes = _codes("alias rel/path -> /target,\nprofile x { /foo r, }\n")
+        assert "alias-relative-path" in codes
+
+    def test_absolute_paths_ok(self):
+        codes = _codes("alias /a -> /b,\nprofile x { /foo r, }\n")
+        assert "alias-relative-path" not in codes
+
+
+class TestBlockRecursion:
+    def test_rules_inside_if_block_are_checked(self):
+        codes = _codes(
+            "profile x {\n  if defined @{HOME} {\n    capability badcap_xyz,\n  }\n}\n"
+        )
+        assert "unknown-capability" in codes
+
+    def test_rules_inside_qualifier_block_are_checked(self):
+        codes = _codes("profile x {\n  audit {\n    capability badcap_xyz,\n  }\n}\n")
+        assert "unknown-capability" in codes
+
+    def test_undefined_variable_in_if_condition(self):
+        codes = _codes(
+            "profile x {\n  if defined @{NOT_DEFINED} {\n    /foo r,\n  }\n}\n"
+        )
+        assert "undefined-variable" in codes
+
+    def test_undefined_bool_variable_in_if_condition(self):
+        codes = _codes("profile x {\n  if ${nonexistent} {\n    /foo r,\n  }\n}\n")
+        assert "undefined-bool-variable" in codes
+
+    def test_defined_bool_variable_in_if_condition_ok(self):
+        codes = _codes(
+            "${distro_mods} = true\n"
+            "profile x {\n"
+            "  if ${distro_mods} {\n"
+            "    /foo r,\n"
+            "  }\n"
+            "}\n"
+        )
+        assert "undefined-bool-variable" not in codes

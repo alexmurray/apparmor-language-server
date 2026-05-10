@@ -70,7 +70,10 @@ QUALIFIER_DEFS: dict[str, KeywordDef] = {
 }
 
 QUALIFIERS: list[str] = list(QUALIFIER_DEFS.keys())
-RE_QUALIFIERS = re.compile(r"^\s*(?P<quals>((" + r"|".join(QUALIFIERS) + r")\s+)*)")
+# The ``priority=N`` value qualifier may precede any of the keyword qualifiers.
+RE_QUALIFIERS = re.compile(
+    r"^\s*(?P<quals>((priority\s*=\s*-?\d+|" + r"|".join(QUALIFIERS) + r")\s+)*)"
+)
 
 # ── Linux capabilities ────────────────────────────────────────────────────────
 # Maps each capability name to its KeywordDef; doc is the full hover Markdown.
@@ -651,6 +654,28 @@ MQUEUE_PERMISSION_DEFS: dict[str, KeywordDef] = {
     "rw": KeywordDef(doc="**mqueue permission `rw`**\n\nShorthand for read+write."),
 }
 
+MQUEUE_PERMISSIONS: list[str] = list(MQUEUE_PERMISSION_DEFS.keys())
+IO_URING_PERMISSIONS: list[str] = list(IO_URING_PERMISSION_DEFS.keys())
+MQUEUE_TYPES: list[str] = ["posix", "sysv"]
+USERNS_PERMISSIONS: list[str] = ["create"]
+UNIX_PERMISSIONS: list[str] = list(NETWORK_PERMISSIONS)
+
+# Profile modes (mutually exclusive flags). The man page lists these under
+# PROFILE MODE; only one may be active per profile.
+PROFILE_MODES: list[str] = [
+    "enforce",
+    "complain",
+    "kill",
+    "default_allow",
+    "unconfined",
+    "prompt",
+]
+
+# Linux errno names accepted as values for the ``error=`` profile flag.
+# The man page only requires names beginning with ``E``; the canonical list
+# changes between kernel versions, so we allow any uppercase ``E…`` token.
+RE_ERRNO_NAME = re.compile(r"^E[A-Z0-9_]+$")
+
 ## ── Keyword definitions ───────────────────────────────────────────────────────
 # Single source of truth for hover docs, completion snippets, and brief details.
 
@@ -1036,4 +1061,12 @@ DEFAULT_INDENT = "  "  # two spaces
 
 RE_BLANK = re.compile(r"^\s*$")
 RE_CLOSE_BRACE = re.compile(r"^\s*\}\s*,?\s*$")
-RE_INCLUDE_GLOB = re.compile(r"""^\s*#?include\s+[<"]([^>"]+)[>"]?""")
+# `include` directives accept three path forms (man apparmor.d):
+#   include <magic/path>       — search-path lookup
+#   include "/abs/or/rel"     — quoted literal
+#   include /abs/or/rel       — bare literal (no surrounding quotes)
+# The ``if exists`` variant (handled separately) shares the same path forms.
+# Capture group 1 = magic-or-quoted path, group 2 = bare path.
+RE_INCLUDE_GLOB = re.compile(
+    r"""^\s*#?include(?!\s+if\s+exists)\s+(?:[<"]([^>"]+)[>"]?|(\S+))"""
+)

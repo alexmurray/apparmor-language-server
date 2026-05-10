@@ -15,14 +15,17 @@ from apparmor_language_server.parser import (
     ChangeProfileRuleNode,
     DbusRuleNode,
     FileRuleNode,
+    IfBlockNode,
     IoUringRuleNode,
     LinkRuleNode,
+    MountRuleNode,
     MqueueRuleNode,
     NetworkNode,
     Parser,
     PivotRootRuleNode,
     ProfileNode,
     PtraceRuleNode,
+    QualifierBlockNode,
     RemountRuleNode,
     SignalRuleNode,
     UnixRuleNode,
@@ -1207,3 +1210,216 @@ class TestParserIncludedDocs:
         p.parse()
         assert any(e.uri == parent_uri for e in p.errors)
         assert all(e.uri.startswith("file://") for e in p.errors)
+
+
+# ── Conditional and qualifier blocks ──────────────────────────────────────────
+
+
+class TestIfBlocks:
+    def test_simple_if(self):
+        src = "profile x {\n  if defined @{HOME} {\n    /foo r,\n  }\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        ifs = [c for c in doc.profiles[0].children if isinstance(c, IfBlockNode)]
+        assert len(ifs) == 1
+        assert ifs[0].condition == "defined @{HOME}"
+        assert ifs[0].else_branch is None
+        assert any(isinstance(c, FileRuleNode) for c in ifs[0].children)
+
+    def test_if_else_if_else_chain(self):
+        src = """profile x {
+  if defined @{HOME} {
+    /a r,
+  } else if @{X} == foo {
+    /b r,
+  } else {
+    /c r,
+  }
+}
+"""
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        ifs = [c for c in doc.profiles[0].children if isinstance(c, IfBlockNode)]
+        assert len(ifs) == 1
+        branch = ifs[0]
+        conds = []
+        while branch is not None:
+            conds.append(branch.condition)
+            branch = branch.else_branch
+        assert conds == ["defined @{HOME}", "@{X} == foo", ""]
+
+    def test_else_on_separate_line(self):
+        src = """profile x {
+  if @{X} == foo {
+    /a r,
+  }
+  else {
+    /c r,
+  }
+}
+"""
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        ifs = [c for c in doc.profiles[0].children if isinstance(c, IfBlockNode)]
+        assert ifs[0].else_branch is not None
+        assert ifs[0].else_branch.condition == ""
+
+
+class TestQualifierBlocks:
+    def test_audit_block(self):
+        src = "profile x {\n  audit {\n    /foo r,\n    network,\n  }\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        qbs = [c for c in doc.profiles[0].children if isinstance(c, QualifierBlockNode)]
+        assert len(qbs) == 1
+        assert qbs[0].qualifiers == ["audit"]
+        assert {type(c).__name__ for c in qbs[0].children} == {
+            "FileRuleNode",
+            "NetworkNode",
+        }
+
+    def test_audit_deny_block(self):
+        src = "profile x {\n  audit deny {\n    /foo w,\n  }\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        qb = [c for c in doc.profiles[0].children if isinstance(c, QualifierBlockNode)][
+            0
+        ]
+        assert qb.qualifiers == ["audit", "deny"]
+
+
+class TestCaretHat:
+    def test_caret_hat_is_parsed(self):
+        src = """profile webapp /usr/sbin/apache2 {
+  ^bar {
+    /foo r,
+  }
+}
+"""
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        outer = doc.profiles[0]
+        hats = [c for c in outer.children if isinstance(c, ProfileNode) and c.is_hat]
+        assert len(hats) == 1
+        assert hats[0].name == "bar"
+
+
+class TestProfileExtensions:
+    def test_xattrs_attachment(self):
+        src = '/usr/bin/* xattrs=(security.apparmor="trusted") {\n  /foo r,\n}\n'
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        assert doc.profiles[0].xattrs == 'security.apparmor="trusted"'
+
+    def test_quoted_profile_name(self):
+        src = 'profile "my app" /usr/bin/myapp {\n  /foo r,\n}\n'
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        assert doc.profiles[0].name == "my app"
+        assert doc.profiles[0].attachment == "/usr/bin/myapp"
+
+    def test_bare_paren_flags_shorthand(self):
+        src = "profile myapp /usr/bin/myapp (complain) {\n  /foo r,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        assert "complain" in doc.profiles[0].flags
+
+
+class TestBooleanAndEmptyVariables:
+    def test_boolean_variable_definition(self):
+        src = "${distro_mods} = true\nprofile x { /foo r, }\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        v = doc.variables["${distro_mods}"]
+        assert v.is_bool is True
+        assert v.values == ["true"]
+
+    def test_empty_quoted_value_is_preserved(self):
+        src = '@{X} = a "" b\nprofile x { /foo r, }\n'
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        assert doc.variables["@{X}"].values == ["a", "", "b"]
+
+
+class TestExtendedStructuredFields:
+    def test_change_profile_safe_mode(self):
+        src = "profile x {\n  change_profile safe /bin/bash -> new_profile,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        cp = next(
+            c for c in doc.profiles[0].children if isinstance(c, ChangeProfileRuleNode)
+        )
+        assert cp.exec_mode == "safe"
+        assert cp.exec_path == "/bin/bash"
+        assert cp.target_profile == "new_profile"
+
+    def test_mount_vfstype(self):
+        src = "profile x {\n  mount vfstype=ext3 /dev/sda1 -> /mnt/,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        m = next(c for c in doc.profiles[0].children if isinstance(c, MountRuleNode))
+        assert m.fstype == "ext3"
+
+    def test_network_structured_fields(self):
+        src = "profile x {\n  network inet stream peer=(ip=127.0.0.1, port=80),\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        n = next(c for c in doc.profiles[0].children if isinstance(c, NetworkNode))
+        assert n.domain == "inet"
+        assert n.type == "stream"
+        assert n.peer is not None and "ip=127.0.0.1" in n.peer
+
+    def test_network_inline_ip_port(self):
+        src = "profile x {\n  network ip=127.0.0.1 port=8080,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        n = next(c for c in doc.profiles[0].children if isinstance(c, NetworkNode))
+        assert n.ip == "127.0.0.1"
+        assert n.port == "8080"
+
+    def test_unix_extended_conditionals(self):
+        src = (
+            "profile x {\n"
+            "  unix (connect) type=stream protocol=0 addr=@bar attr=foo "
+            "label=baz peer=(label=/p,addr=@b),\n"
+            "}\n"
+        )
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        u = next(c for c in doc.profiles[0].children if isinstance(c, UnixRuleNode))
+        assert u.protocol == "0"
+        assert u.attr == "foo"
+        assert u.label == "baz"
+
+    def test_mqueue_label_conditional(self):
+        src = "profile x {\n  mqueue create label=foo 123,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        q = next(c for c in doc.profiles[0].children if isinstance(c, MqueueRuleNode))
+        assert q.label == "foo"
+        assert q.name == "123"
+
+    def test_priority_qualifier_on_file_rule(self):
+        src = "profile x {\n  priority=10 allow /foo r,\n}\n"
+        doc, errs = parse_document("file:///t.aa", src)
+        assert errs == []
+        f = next(c for c in doc.profiles[0].children if isinstance(c, FileRuleNode))
+        assert "priority=10" in f.qualifiers
+        assert "allow" in f.qualifiers
+
+
+class TestBareIncludes:
+    def test_bare_path_include_is_recognised(self, tmp_path):
+        target = tmp_path / "abstractions" / "myapp"
+        target.parent.mkdir()
+        target.write_text("# empty include\n")
+        src = f"include {target}\nprofile x {{ /foo r, }}\n"
+        p = Parser(
+            (tmp_path / "main.aa").as_uri(),
+            src,
+            search_dirs=[tmp_path],
+        )
+        doc = p.parse()
+        assert len(doc.includes) == 1
+        assert doc.includes[0].path == str(target)
+        assert doc.includes[0].angle_bracket is False
