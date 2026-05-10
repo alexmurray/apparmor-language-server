@@ -68,6 +68,77 @@ apparmor-language-server --tcp --host 127.0.0.1 --port 2087
 
 ---
 
+## Standalone linter (`apparmor-lint`)
+
+The package also ships a `apparmor-lint` command-line tool that runs the
+**same parser and diagnostic checks** as the language server — useful in CI,
+pre-commit hooks, or when you just want a quick check from the shell without
+firing up an editor.
+
+```bash
+# Lint one or more files
+apparmor-lint /etc/apparmor.d/usr.bin.foo
+apparmor-lint profile.aa another-profile.aa
+
+# Read from stdin
+cat profile.aa | apparmor-lint -
+
+# Skip the external apparmor_parser cross-check
+apparmor-lint --no-parser profile.aa
+
+# Machine-readable output for CI
+apparmor-lint --format json profile.aa
+```
+
+### Output format
+
+The default `pretty` format is GCC-compatible so editors and tools that
+already parse `cc(1)` output (Vim quickfix, Emacs `compile`, `grep -nH`, …)
+work out of the box:
+
+```
+profile.aa:3:3: error: Unknown capability 'bad_cap_xyz'. … [unknown-capability] (apparmor-language-server)
+profile.aa:5:3: error: Network rule: netlink may only specify type 'dgram' or 'raw' (got 'stream'). [netlink-type-restricted] (apparmor-language-server)
+```
+
+`--format json` emits an array of records, each with `path`, `uri`,
+`severity`, `message`, `code`, `source`, `line`, `column`, `end_line`,
+and `end_column` — handy for piping into `jq` or aggregating across files.
+
+### Options
+
+| Flag | Meaning |
+|---|---|
+| `paths…` | One or more files to lint, or `-` to read from stdin |
+| `--no-parser` | Skip the external `apparmor_parser -Q -K` cross-check |
+| `--apparmor-parser PATH` | Use a specific `apparmor_parser` binary (default: `$PATH` lookup) |
+| `-I DIR`, `--include-path DIR` | Extra directory to search for `include`/`abi` targets (repeatable) |
+| `--format {pretty,json}` | Output format (default: `pretty`) |
+| `-q`, `--quiet` | Only show error-severity diagnostics |
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Clean — no error-severity diagnostics (warnings, info, hints permitted) |
+| `1` | At least one error-severity diagnostic was emitted |
+| `2` | The CLI itself could not run (file missing, argument is a directory, etc.) |
+
+### Library API
+
+`apparmor_language_server.lint` also exposes the linter as a Python API for
+embedding in other tools:
+
+```python
+from apparmor_language_server.lint import lint_file, lint_text
+
+# Returns dict[str, list[lsprotocol.types.Diagnostic]] keyed by URI.
+diags = lint_file(Path("profile.aa"), run_apparmor_parser=False)
+diags = lint_text("profile x { /foo r, }\n")
+```
+
+---
+
 ## Server configuration
 
 ### Environment variables
@@ -231,6 +302,7 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `duplicate-capability` | Warning | Capability declared more than once |
 | `conflicting-capability` | Warning | Same capability both allowed and denied |
 | `undefined-variable` | Warning | `@{VAR}` used but never defined |
+| `undefined-bool-variable` | Warning | `${BOOL_VAR}` referenced in an `if` condition but never defined |
 | `missing-include` | Warning | Include target not found on disk |
 | `missing-abi` | Warning | ABI target not found on disk |
 | `unknown-signal-permission` | Warning | Invalid permission in `signal` rule |
@@ -241,6 +313,27 @@ The formatter respects the editor's `tabSize` setting (passed via the LSP
 | `exec-target-without-transition` | Error | `-> profile` exec target specified without an exec transition mode |
 | `deny-with-exec-transition` | Error | Exec transition mode (e.g. `ix`, `px`) used with the `deny` qualifier — use `deny x` instead |
 | `bare-x-without-deny` | Error | Bare `x` permission used without the `deny` qualifier — use an exec transition mode (`ix`, `px`, `cx`, …) |
+| `allow-deny-conflict` | Error | `allow` and `deny` qualifiers used together on the same rule |
+| `conflicting-profile-modes` | Error | More than one profile mode flag (`enforce`/`complain`/`kill`/`default_allow`/`unconfined`/`prompt`) set together |
+| `invalid-error-flag-value` | Warning | `flags=(error=…)` value is not a valid `E…` errno name |
+| `alias-relative-path` | Warning | `alias` source/target is not an absolute path |
+| `unknown-mount-option` | Warning | Mount option not in the documented `mount(8)` flag list |
+| `unknown-rlimit-resource` | Error | Resource name not recognised by `setrlimit(2)` |
+| `invalid-rlimit-value` | Warning | rlimit value/unit doesn't match the resource family (size, time, integer, nice range -20..19) |
+| `unknown-dbus-permission` | Warning | Invalid permission in `dbus` rule |
+| `dbus-bind-in-message-rule` | Error | `bind` permission used in a dbus message rule (path/interface/member/peer) |
+| `dbus-send-recv-in-service-rule` | Error | `send`/`receive` used in a dbus service rule (`name=`) |
+| `dbus-eavesdrop-with-conds` | Error | `eavesdrop` used with conditionals other than `bus=` |
+| `unknown-unix-permission` | Warning | Invalid permission in `unix` socket rule |
+| `unknown-unix-type` | Warning | `type=` not in `stream`/`dgram`/`seqpacket` |
+| `unknown-mqueue-permission` | Warning | Invalid permission in `mqueue` rule |
+| `unknown-mqueue-type` | Warning | `type=` not in `posix`/`sysv` |
+| `mqueue-posix-name-shape` | Error | POSIX mqueue name must start with `/` |
+| `mqueue-sysv-name-shape` | Error | SysV mqueue name must be a positive integer |
+| `unknown-io-uring-permission` | Warning | `io_uring` permission not in `sqpoll`/`override_creds`/`cmd` |
+| `unknown-userns-permission` | Warning | `userns` permission other than `create` |
+| `netlink-type-restricted` | Error | `network netlink` may only specify type `dgram` or `raw` |
+| `pivot-root-trailing-slash` | Warning | `pivot_root` path doesn't end with `/` (paths refer to directories) |
 | `apparmor-parser-error` | Error | Error reported by `apparmor_parser -Q -K`; attached to the file and line cited by the parser (may be an included abstraction) |
 
 ---
@@ -259,6 +352,7 @@ apparmor_language_server/
 ├── diagnostics.py      – linting / diagnostic checks
 ├── formatting.py       – auto-formatter (returns TextEdits)
 ├── hover.py            – hover documentation provider
+├── lint.py             – standalone `apparmor-lint` CLI (parser + diagnostics, GCC/JSON output)
 └── docs.py             – helpers for consistent hover/completion docs
 ```
 

@@ -27,6 +27,7 @@ dev = [
 
 [project.scripts]
 apparmor-language-server = "apparmor_language_server.server:main"
+apparmor-lint            = "apparmor_language_server.lint:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
