@@ -264,10 +264,34 @@ class TestFileRuleHover:
         # "  /usr/bin/app ix," — char 15 lands on 'i' of 'ix'
         assert "inherit" in _rule_text("  /usr/bin/app ix,", 15).lower()
 
-    def test_hover_none_on_path(self):
-        # hovering on the leading '/' of the path should return None
+    def test_hover_path_shows_path_hover(self):
+        # hovering on the path returns a path-pattern hover, not permissions
         result = _hover_rule("  /foo r,", 2)
-        assert result is None
+        assert result is not None
+        assert "path" in result.contents.value.lower()
+        assert "/foo" in result.contents.value
+
+    def test_hover_path_not_confused_with_permissions(self):
+        # 'r' inside /var/run/ must not produce a file-permissions hover
+        rule = "  /var/run/daemon rw,"
+        # char 9 lands on 'r' of 'run' — inside the path
+        result = _hover_rule(rule, 9)
+        assert result is not None
+        assert "path" in result.contents.value.lower()
+        assert "permission" not in result.contents.value.lower()
+
+    def test_hover_permissions_still_work_after_path(self):
+        # 'rw' after the path still triggers the permissions hover
+        rule = "  /var/run/daemon rw,"
+        # char 18 lands on 'r' of 'rw' — in the permissions
+        result = _hover_rule(rule, 18)
+        assert result is not None
+        assert "read" in result.contents.value.lower()
+
+    def test_hover_path_with_glob(self):
+        result = _hover_rule("  /etc/**  rw,", 7)
+        assert result is not None
+        assert "/etc/**" in result.contents.value
 
 
 # ── Variable hover ────────────────────────────────────────────────────────────

@@ -230,6 +230,20 @@ def _hover_file_rule(node: Node, line_text: str, ch: int) -> Optional[Hover]:
             ws,
             we,
         )
+    # Check path before permissions: RE_FILE_PERMISSIONS matches substrings of
+    # paths (e.g. 'r' in '/var/run/', 'ar' in '/var/') producing false positives.
+    if node.path:
+        idx = line_text.find(node.path)
+        if idx != -1 and idx <= ch <= idx + len(node.path):
+            return _make_hover(
+                f"**File rule path** `{node.path}`\n\n"
+                "Path pattern for the target of this file rule.\n\n"
+                "AppArmor glob patterns: `*` matches any character except `/`; "
+                "`**` matches any character including `/`; "
+                "`?` matches any single character except `/`.",
+                idx,
+                idx + len(node.path),
+            )
     for pm in RE_FILE_PERMISSIONS.finditer(line_text):
         if pm.start() <= ch <= pm.end():
             return _file_perm_hover(pm.group(1), pm.start(), pm.end())
