@@ -596,6 +596,17 @@ class TestCheckApparmorParser:
             get_diagnostics(doc, errors, document_path=None)
         mock_run.assert_not_called()
 
+    def test_get_diagnostics_skips_parser_for_snippet_file(self, tmp_path):
+        # Abstraction/tunables files have no top-level profiles; apparmor_parser
+        # would produce spurious errors on them.
+        snippet = tmp_path / "base"
+        snippet.write_text("@{HOME} = /home/*/ /root/\n")
+        doc, errors = parse_document(snippet.as_uri(), snippet.read_text())
+        assert not doc.profiles
+        with patch("subprocess.run") as mock_run:
+            get_diagnostics(doc, errors, document_path=snippet)
+        mock_run.assert_not_called()
+
     def test_get_diagnostics_calls_parser_when_path_exists(self, tmp_path):
         profile = tmp_path / "test.aa"
         profile.write_text("profile x {\n  capability kill,\n}\n")

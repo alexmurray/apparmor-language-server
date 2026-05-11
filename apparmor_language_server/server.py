@@ -391,6 +391,12 @@ class AppArmorLanguageServer(LanguageServer):
         if self._edit_version.get(uri) != version:
             return  # stale — a newer edit is already in flight
 
+        # Skip snippet files (abstractions, tunables, ABI, …) — they have no
+        # top-level profiles and would produce spurious apparmor_parser errors.
+        cached = self.get_cached(uri)
+        if not cached or not cached[0].profiles:
+            return
+
         parser_result = _check_apparmor_parser(
             None,
             uri,

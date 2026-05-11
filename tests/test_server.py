@@ -1430,6 +1430,7 @@ class TestBackgroundParser:
     def test_run_background_parser_stores_results_when_current(self, server):
         from lsprotocol.types import Diagnostic, DiagnosticSeverity, Position, Range
 
+        server.parse_and_cache(URI, "profile x { }\n")
         server._edit_version[URI] = 2
         parser_diag = Diagnostic(
             range=Range(start=Position(0, 0), end=Position(0, 5)),
@@ -1471,6 +1472,7 @@ class TestBackgroundParser:
         mock_publish.assert_not_called()
 
     def test_run_background_parser_publishes_when_current(self, server):
+        server.parse_and_cache(URI, "profile x { }\n")
         server._edit_version[URI] = 7
         with (
             patch(
@@ -1482,6 +1484,18 @@ class TestBackgroundParser:
         ):
             server._run_background_parser(URI, "profile x { }\n", version=7)
         mock_publish.assert_called_once_with(URI, "profile x { }\n", run_external=False)
+
+    def test_run_background_parser_skips_snippet_files(self, server):
+        # Abstraction/tunables files have no top-level profiles; the background
+        # parser must not run apparmor_parser on them.
+        snippet = "@{HOME} = /home/*/ /root/\n"
+        server._edit_version[URI] = 1
+        server.parse_and_cache(URI, snippet)
+        with patch(
+            "apparmor_language_server.server._check_apparmor_parser"
+        ) as mock_check:
+            server._run_background_parser(URI, snippet, version=1)
+        mock_check.assert_not_called()
 
 
 # ── evict cleans up background-parser state ───────────────────────────────────

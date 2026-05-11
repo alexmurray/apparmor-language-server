@@ -341,7 +341,10 @@ def get_diagnostics(
         _check_node(node, ctx)
 
     # External apparmor_parser check — only when we have a real saved file
-    if document_path is not None and document_path.exists():
+    # that contains at least one profile.  Abstraction and tunables files are
+    # snippets with no top-level profiles; running apparmor_parser on them
+    # produces spurious errors because the rules are not wrapped in a profile.
+    if document_path is not None and document_path.exists() and doc.profiles:
         for k, v in _check_apparmor_parser(
             document_path,
             doc.uri,
