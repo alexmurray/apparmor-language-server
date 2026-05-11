@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 from apparmor_language_server.diagnostics import (
     _check_apparmor_parser,
     _find_apparmor_parser,
-    _snap_parser_extra_args,
+    _parser_extra_args,
     get_diagnostics,
 )
 from apparmor_language_server.parser import parse_document
@@ -683,20 +683,53 @@ class TestCheckApparmorParser:
         assert result == {}
 
 
-class TestSnapParserExtraArgs:
-    def test_no_snap_env_returns_empty(self, monkeypatch):
+class TestParserExtraArgs:
+    def test_no_snap_env_no_base_dir_returns_empty(self, monkeypatch):
         monkeypatch.delenv("SNAP", raising=False)
-        assert _snap_parser_extra_args() == []
+        assert _parser_extra_args(None) == []
 
-    def test_snap_env_returns_base_and_config_args(self, monkeypatch):
+    def test_explicit_base_dir_added(self, monkeypatch):
+        monkeypatch.delenv("SNAP", raising=False)
+        args = _parser_extra_args("/custom/apparmor.d")
+        assert args == ["--base", "/custom/apparmor.d"]
+
+    def test_explicit_config_file_added(self, monkeypatch):
+        monkeypatch.delenv("SNAP", raising=False)
+        args = _parser_extra_args(None, "/custom/parser.conf")
+        assert args == ["--config-file", "/custom/parser.conf"]
+
+    def test_explicit_base_dir_and_config_file_added(self, monkeypatch):
+        monkeypatch.delenv("SNAP", raising=False)
+        args = _parser_extra_args("/custom/apparmor.d", "/custom/parser.conf")
+        assert args == [
+            "--base",
+            "/custom/apparmor.d",
+            "--config-file",
+            "/custom/parser.conf",
+        ]
+
+    def test_snap_env_no_base_dir_returns_snap_base_and_config_args(self, monkeypatch):
         monkeypatch.setenv("SNAP", "/snap/apparmor-language-server/current")
-        args = _snap_parser_extra_args()
+        args = _parser_extra_args(None)
         assert "--base" in args
         assert "--config-file" in args
         base_idx = args.index("--base")
         assert args[base_idx + 1] == "/var/lib/snapd/hostfs/etc/apparmor.d"
         cfg_idx = args.index("--config-file")
         assert args[cfg_idx + 1] == "/var/lib/snapd/hostfs/etc/apparmor/parser.conf"
+
+    def test_snap_env_with_base_dir_uses_base_dir_and_config_args(self, monkeypatch):
+        monkeypatch.setenv("SNAP", "/snap/apparmor-language-server/current")
+        args = _parser_extra_args("/custom/apparmor.d")
+        assert "--config-file" in args
+        base_idx = args.index("--base")
+        assert args[base_idx + 1] == "/custom/apparmor.d"
+
+    def test_explicit_config_file_overrides_snap(self, monkeypatch):
+        monkeypatch.setenv("SNAP", "/snap/apparmor-language-server/current")
+        args = _parser_extra_args(None, "/custom/parser.conf")
+        cfg_idx = args.index("--config-file")
+        assert args[cfg_idx + 1] == "/custom/parser.conf"
 
     def test_snap_args_passed_to_subprocess(self, monkeypatch, tmp_path):
         monkeypatch.setenv("SNAP", "/snap/apparmor-language-server/current")

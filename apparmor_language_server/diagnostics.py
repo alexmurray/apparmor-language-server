@@ -161,16 +161,26 @@ def _add(
 # ── apparmor_parser integration ───────────────────────────────────────────────
 
 
-def _snap_parser_extra_args() -> list[str]:
-    """Return extra apparmor_parser args needed under snap confinement, else []."""
-    if not os.environ.get("SNAP"):
-        return []
-    return [
-        "--base",
-        str(SNAP_HOSTFS / "etc/apparmor.d"),
-        "--config-file",
-        str(SNAP_HOSTFS / "etc/apparmor/parser.conf"),
-    ]
+def _parser_extra_args(
+    base_dir: Optional[str], config_file: Optional[str] = None
+) -> list[str]:
+    """Return extra apparmor_parser args for --base and --config-file.
+
+    When *base_dir* is provided it is used for ``--base``; otherwise the snap
+    host-filesystem path is used when running under snap confinement, and no
+    ``--base`` argument is emitted outside snap.  *config_file* follows the
+    same logic for ``--config-file``.
+    """
+    args: list[str] = []
+    if base_dir is not None:
+        args += ["--base", base_dir]
+    elif os.environ.get("SNAP"):
+        args += ["--base", str(SNAP_HOSTFS / "etc/apparmor.d")]
+    if config_file is not None:
+        args += ["--config-file", config_file]
+    elif os.environ.get("SNAP"):
+        args += ["--config-file", str(SNAP_HOSTFS / "etc/apparmor/parser.conf")]
+    return args
 
 
 def _find_apparmor_parser(configured_path: str) -> Optional[str]:
@@ -190,6 +200,8 @@ def _check_apparmor_parser(
     uri: str,
     apparmor_parser_path: Optional[str],
     text: Optional[str] = None,
+    base_dir: Optional[str] = None,
+    config_file: Optional[str] = None,
 ) -> dict[str, list[Diagnostic]]:
     """Run apparmor_parser -Q -K against document_path or stdin; return diagnostics by URI.
 
@@ -208,7 +220,7 @@ def _check_apparmor_parser(
         logger.debug("apparmor_parser not found; skipping external parse check")
         return {}
 
-    extra_args = _snap_parser_extra_args()
+    extra_args = _parser_extra_args(base_dir, config_file)
     if text is not None:
         path_arg = "/dev/stdin"
     else:
@@ -293,6 +305,8 @@ def get_diagnostics(
     search_dirs: Optional[list[Path]] = None,
     document_path: Optional[Path] = None,
     apparmor_parser_path: Optional[str] = None,
+    base_dir: Optional[str] = None,
+    config_file: Optional[str] = None,
 ) -> dict[str, list[Diagnostic]]:
     diags: dict[str, list[Diagnostic]] = {}
     logger.debug("Running diagnostics for %s", doc.uri)
@@ -329,7 +343,11 @@ def get_diagnostics(
     # External apparmor_parser check — only when we have a real saved file
     if document_path is not None and document_path.exists():
         for k, v in _check_apparmor_parser(
-            document_path, doc.uri, apparmor_parser_path
+            document_path,
+            doc.uri,
+            apparmor_parser_path,
+            base_dir=base_dir,
+            config_file=config_file,
         ).items():
             diags.setdefault(k, []).extend(v)
 

@@ -116,6 +116,8 @@ class Settings:
     """Server configuration, populated from workspace/didChangeConfiguration."""
 
     diagnostics_enable: bool = True
+    base_dir: str = ""
+    parser_config_file: str = ""
     include_search_paths: list[str] = _field(default_factory=list)
     profiles_subdir: str = "apparmor.d"
     apparmor_parser_path: str = ""
@@ -134,12 +136,18 @@ class Settings:
             enabled = diagnostics.get("enable", True)
             if isinstance(enabled, bool):
                 s.diagnostics_enable = enabled
+        base_dir = apparmor.get("baseDir", "")
+        if isinstance(base_dir, str):
+            s.base_dir = base_dir
         paths = apparmor.get("includeSearchPaths", [])
         if isinstance(paths, list):
             s.include_search_paths = [p for p in paths if isinstance(p, str)]
         subdir = apparmor.get("profilesSubdir", "apparmor.d")
         if isinstance(subdir, str):
             s.profiles_subdir = subdir
+        config_file = apparmor.get("parserConfigFile", "")
+        if isinstance(config_file, str):
+            s.parser_config_file = config_file
         parser_path = apparmor.get("apparmorParserPath", "")
         if isinstance(parser_path, str):
             s.apparmor_parser_path = parser_path
@@ -194,13 +202,29 @@ class AppArmorLanguageServer(LanguageServer):
 
     # ── Settings helpers ──────────────────────────────────────────────────────
 
-    def _get_search_dirs(self) -> Optional[list[Path]]:
-        """Return effective include search dirs, or None to use built-in defaults."""
+    def _get_base_dir(self) -> str:
+        """Return the effective AppArmor base directory."""
+        with self._settings_lock:
+            configured = self._settings.base_dir
+        return configured or str(DEFAULT_INCLUDE_SEARCH_DIRS[0])
+
+    def _get_search_dirs(self) -> list[Path]:
+        """Return effective include search dirs, defaulting to [baseDir]."""
         with self._settings_lock:
             extra = [Path(p) for p in self._settings.include_search_paths if p]
+            configured_base = self._settings.base_dir
+        effective_base = (
+            Path(configured_base) if configured_base else DEFAULT_INCLUDE_SEARCH_DIRS[0]
+        )
         if not extra:
-            return None
-        return extra + DEFAULT_INCLUDE_SEARCH_DIRS
+            return [effective_base]
+        return extra + [effective_base]
+
+    def _get_parser_config_file(self) -> Optional[str]:
+        """Return the configured parser config file path, or None to use auto-detection."""
+        with self._settings_lock:
+            configured = self._settings.parser_config_file
+        return configured or None
 
     def _get_apparmor_parser_path(self) -> str:
         with self._settings_lock:
@@ -228,6 +252,8 @@ class AppArmorLanguageServer(LanguageServer):
             return
         search_dirs = self._get_search_dirs()
         parser_path = self._get_apparmor_parser_path()
+        base_dir = self._get_base_dir()
+        config_file = self._get_parser_config_file()
         for uri, (doc, errors) in snapshot:
             # Skip the external apparmor_parser check here: the buffer text
             # may be ahead of the on-disk file, and we don't want to block
@@ -238,6 +264,8 @@ class AppArmorLanguageServer(LanguageServer):
                 search_dirs,
                 document_path=None,
                 apparmor_parser_path=parser_path,
+                base_dir=base_dir,
+                config_file=config_file,
             )
             for diag_uri, d in diags.items():
                 self.text_document_publish_diagnostics(
@@ -306,6 +334,8 @@ class AppArmorLanguageServer(LanguageServer):
             self._get_search_dirs(),
             document_path=document_path,
             apparmor_parser_path=self._get_apparmor_parser_path(),
+            base_dir=self._get_base_dir(),
+            config_file=self._get_parser_config_file(),
         )
 
         if run_external:
@@ -362,7 +392,12 @@ class AppArmorLanguageServer(LanguageServer):
             return  # stale — a newer edit is already in flight
 
         parser_result = _check_apparmor_parser(
-            None, uri, self._get_apparmor_parser_path(), text=text
+            None,
+            uri,
+            self._get_apparmor_parser_path(),
+            text=text,
+            base_dir=self._get_base_dir(),
+            config_file=self._get_parser_config_file(),
         )
 
         if self._edit_version.get(uri) != version:

@@ -1022,6 +1022,7 @@ class TestSettingsFromRaw:
     def test_defaults_when_empty_dict(self):
         s = Settings.from_raw({})
         assert s.diagnostics_enable is True
+        assert s.base_dir == ""
         assert s.include_search_paths == []
 
     def test_defaults_when_non_dict(self):
@@ -1048,6 +1049,22 @@ class TestSettingsFromRaw:
     def test_include_search_paths_filters_non_strings(self):
         s = Settings.from_raw({"apparmor": {"includeSearchPaths": ["/ok", 42, None]}})
         assert s.include_search_paths == ["/ok"]
+
+    def test_base_dir_set(self):
+        s = Settings.from_raw({"apparmor": {"baseDir": "/custom/apparmor.d"}})
+        assert s.base_dir == "/custom/apparmor.d"
+
+    def test_base_dir_non_string_ignored(self):
+        s = Settings.from_raw({"apparmor": {"baseDir": 42}})
+        assert s.base_dir == ""
+
+    def test_parser_config_file_set(self):
+        s = Settings.from_raw({"apparmor": {"parserConfigFile": "/custom/parser.conf"}})
+        assert s.parser_config_file == "/custom/parser.conf"
+
+    def test_parser_config_file_non_string_ignored(self):
+        s = Settings.from_raw({"apparmor": {"parserConfigFile": 42}})
+        assert s.parser_config_file == ""
 
     def test_unknown_keys_ignored(self):
         s = Settings.from_raw({"apparmor": {"unknownKey": True}, "other": "stuff"})
@@ -1115,8 +1132,10 @@ class TestDidChangeConfiguration:
         did_change_configuration(server, self._params({}))
         assert published == []
 
-    def test_get_search_dirs_none_when_no_extra_paths(self, server):
-        assert server._get_search_dirs() is None
+    def test_get_search_dirs_returns_base_dir_when_no_extra_paths(self, server):
+        from apparmor_language_server.constants import DEFAULT_INCLUDE_SEARCH_DIRS
+
+        assert server._get_search_dirs() == [DEFAULT_INCLUDE_SEARCH_DIRS[0]]
 
     def test_get_search_dirs_prepends_extra_paths(self, server, tmp_path):
         did_change_configuration(
@@ -1124,8 +1143,34 @@ class TestDidChangeConfiguration:
             self._params({"apparmor": {"includeSearchPaths": [str(tmp_path)]}}),
         )
         search_dirs = server._get_search_dirs()
-        assert search_dirs is not None
         assert search_dirs[0] == tmp_path
+
+    def test_get_base_dir_default(self, server):
+        from apparmor_language_server.constants import DEFAULT_INCLUDE_SEARCH_DIRS
+
+        assert server._get_base_dir() == str(DEFAULT_INCLUDE_SEARCH_DIRS[0])
+
+    def test_get_base_dir_custom(self, server, tmp_path):
+        did_change_configuration(
+            server, self._params({"apparmor": {"baseDir": str(tmp_path)}})
+        )
+        assert server._get_base_dir() == str(tmp_path)
+
+    def test_get_search_dirs_uses_custom_base_dir(self, server, tmp_path):
+        did_change_configuration(
+            server, self._params({"apparmor": {"baseDir": str(tmp_path)}})
+        )
+        assert server._get_search_dirs() == [tmp_path]
+
+    def test_get_parser_config_file_default(self, server):
+        assert server._get_parser_config_file() is None
+
+    def test_get_parser_config_file_custom(self, server, tmp_path):
+        conf = tmp_path / "parser.conf"
+        did_change_configuration(
+            server, self._params({"apparmor": {"parserConfigFile": str(conf)}})
+        )
+        assert server._get_parser_config_file() == str(conf)
 
     def test_profiles_subdir_default(self):
         s = Settings.from_raw({})

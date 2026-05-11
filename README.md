@@ -157,7 +157,9 @@ examples below each editor section).
 | Setting | Type | Default | Effect |
 |---|---|---|---|
 | `apparmor.diagnostics.enable` | boolean | `true` | Enable or disable all diagnostic (linting) checks |
-| `apparmor.includeSearchPaths` | string[] | `[]` | Extra directories to search when resolving `include` and `abi` paths |
+| `apparmor.baseDir` | string | `"/etc/apparmor.d"` | Base directory for AppArmor profiles. Passed as `--base` to `apparmor_parser`. Also used as the default value for `apparmor.includeSearchPaths` when that setting is not configured. Defaults to `/var/lib/snapd/hostfs/etc/apparmor.d` when running as a snap. |
+| `apparmor.parserConfigFile` | string | `""` | Path to the `apparmor_parser` configuration file, passed as `--config-file`. Leave empty to auto-detect: under snap confinement the host `/etc/apparmor/parser.conf` is used automatically; outside snap no `--config-file` is passed. |
+| `apparmor.includeSearchPaths` | string[] | `[]` | Extra directories to search when resolving `include` and `abi` paths, prepended ahead of `apparmor.baseDir`. When empty, `apparmor.baseDir` is used as the sole search directory. |
 | `apparmor.profilesSubdir` | string | `"apparmor.d"` | Subdirectory of the workspace root to index for workspace symbols; set to `""` or `"."` to index the whole workspace |
 | `apparmor.apparmorParserPath` | string | `""` | Path to the `apparmor_parser` binary. Leave empty to auto-detect from `$PATH`. Set to a specific path (e.g. `/usr/sbin/apparmor_parser`) to pin a particular version. When the binary is found, the server runs `apparmor_parser -Q -K` against each saved file and surfaces any errors as diagnostics. |
 
