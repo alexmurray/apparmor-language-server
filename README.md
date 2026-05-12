@@ -1,3 +1,7 @@
+# THIS REPO IS NOW ARCHIVED / FROZEN
+
+# All future development of apparmor-language-server is now done under the upstream apparmor project repository at https://gitlab.com/apparmor/apparmor-language-server
+
 # AppArmor Language Server (`apparmor-language-server`)
 
 [![CI](https://github.com/alexmurray/apparmor-language-server/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/alexmurray/apparmor-language-server/actions/workflows/build-and-test.yml)
